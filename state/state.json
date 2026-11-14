@@ -1,0 +1,10 @@
+{
+ "alerted": {},
+ "digest_pending": {},
+ "digest_sent": {},
+ "health": {
+  "first_run": "2026-11-14T22:33:34+00:00",
+  "last_any_success": "2026-11-14T22:33:34+00:00"
+ },
+ "history": {}
+}
