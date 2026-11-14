@@ -1,0 +1,195 @@
+# Ammo deal monitor configuration.
+# Thresholds are delivered cost per round in DOLLARS (0.25 = 25¢), including shipping and tax.
+
+location:
+  state: TX
+  sales_tax_rate: 0.0825      # TX 6.25% state + up to 2% local. Set to your exact local rate.
+  tax_shipping: true          # Texas taxes shipping charges on taxable items
+
+purchase:
+  # When small boxes must be bundled (to reach 500 rds of 9mm, a 250-shell
+  # case, or free shipping), never assume an order bigger than this.
+  max_order_total: 700
+
+allow_unlisted_retailers: true   # aggregators surface other stores; those alerts get a "check retailer" note
+marketplace_sellers: [GunBroker, Armslist, GunsAmerica, eBay, Gun Genie, GunAuction, Guns International]
+
+alerts:
+  realert_price_drop: 0.005   # re-text a deal already sent if it drops another 0.5¢/rd or more
+  realert_after_days: 7       # ...or if it is still live this many days later
+  digest_repeat_days: 3       # a GOOD deal reappears in the daily digest at most every N days
+  health_warning_after_hours: 36   # warn if every source has been failing this long
+  health_warning_every_days: 3
+
+categories:
+  9mm:
+    enabled: true
+    grains: [115, 124]
+    min_rounds: 500
+    good: 0.25
+    great: 0.23
+    exceptional: 0.21
+    suspicious_below: 0.15
+
+  # Browning A5: set to true once a load is confirmed to cycle. Until then every
+  # 12 ga alert says to buy one case only.
+  a5_cycling_confirmed: false
+
+  12ga_a:   # Priority A: 2-3/4" lead 1-1/4 oz, high velocity
+    enabled: true
+    shot_oz: 1.25
+    shot_sizes: ["6", "7.5", "8", "9"]
+    min_velocity: 1290          # "about 1300 fps or more"
+    allow_unknown_velocity: true  # alert with a "verify velocity" note when fps isn't listed
+    min_rounds: 250
+    good: 0.58
+    great: 0.50
+    exceptional: 0.45
+    suspicious_below: 0.30
+
+  12ga_b:   # Priority B (test loads): 2-3/4" lead 1-1/8 oz at 1250+ fps
+    enabled: true
+    shot_oz: 1.125
+    min_velocity: 1250
+    min_rounds: 250
+    good: 0.42
+    great: 0.36
+    suspicious_below: 0.22
+
+  762x54r:
+    enabled: true
+    min_rounds: 0
+    good: 0.55
+    great: 0.45
+    exceptional: 0.40
+    can_440_good_total: 240
+    can_440_great_total: 200
+    suspicious_below: 0.30
+
+# Used for any store without its own rule (e.g. found via an aggregator).
+default_shipping: {flat: 14.99, verified: false}
+
+# Shipping rules: flat = fee per order, free_over = order subtotal that ships free,
+# free_min_rounds = a single listing of at least this many rounds ships free.
+# Few of these could be confirmed online. "verified: false" makes alerts say
+# shipping is an estimate. Check each store's checkout once, fix the numbers,
+# and set verified: true.
+#
+# pages = listing/search pages to scrape for each caliber. Store URLs change.
+# Run `python -m ammo_finder doctor` (or the "doctor" workflow) to see which
+# pages return products, and fix the ones that don't.
+retailers:
+  - name: LuckyGunner
+    aliases: [Lucky Gunner]
+    domain: luckygunner.com
+    shipping: {flat: 14.99, verified: false}
+    pages:
+      9mm: [https://www.luckygunner.com/handgun/9mm-ammo]
+      12ga: [https://www.luckygunner.com/shotgun/12-gauge-ammo]
+      762x54r: [https://www.luckygunner.com/rifle/7.62x54r-ammo]
+
+  - name: Ammo.com
+    aliases: [ammo.com]
+    domain: ammo.com
+    shipping: {flat: 14.99, verified: false}
+    pages:
+      9mm: [https://ammo.com/handgun/9mm-ammo]
+      12ga: [https://ammo.com/shotgun/12-gauge-ammo]
+      762x54r: [https://ammo.com/rifle/7.62x54r-ammo]
+
+  - name: Target Sports USA
+    aliases: [TargetSportsUSA, Target Sports]
+    domain: targetsportsusa.com
+    # Their shipping page says case-quantity ammo ships free via UPS Ground.
+    shipping: {flat: 14.99, free_min_rounds: {9mm: 500, 12ga: 250, 762x54r: 440}, verified: false}
+    pages:
+      9mm: ["https://www.targetsportsusa.com/search.aspx?searchterm=9mm+fmj"]
+      12ga: ["https://www.targetsportsusa.com/search.aspx?searchterm=12+gauge+1+1%2F4+oz"]
+      762x54r: ["https://www.targetsportsusa.com/search.aspx?searchterm=7.62x54r"]
+
+  - name: Bulk Ammo
+    aliases: [BulkAmmo]
+    domain: bulkammo.com
+    shipping: {flat: 14.99, verified: false}
+    pages:
+      9mm: [https://www.bulkammo.com/handgun/bulk-9mm-ammo]
+      12ga: [https://www.bulkammo.com/shotgun/bulk-12-gauge-ammo]
+      762x54r: [https://www.bulkammo.com/rifle/bulk-7.62x54r-ammo]
+
+  - name: Rogers Sporting Goods
+    aliases: [Rogers]
+    domain: rogerssportinggoods.com
+    shipping: {flat: 14.99, verified: false}
+    pages:
+      9mm: ["https://www.rogerssportinggoods.com/catalogsearch/result/?q=9mm+fmj"]
+      12ga: ["https://www.rogerssportinggoods.com/catalogsearch/result/?q=12+gauge+1+1%2F4+oz"]
+      762x54r: ["https://www.rogerssportinggoods.com/catalogsearch/result/?q=7.62x54r"]
+
+  - name: Brownells
+    domain: brownells.com
+    # One unconfirmed source: free over $199.
+    shipping: {flat: 14.99, free_over: 199, verified: false}
+    pages:
+      9mm: ["https://www.brownells.com/search/?k=9mm%20fmj"]
+      12ga: ["https://www.brownells.com/search/?k=12%20gauge%201-1%2F4%20oz"]
+      762x54r: ["https://www.brownells.com/search/?k=7.62x54r"]
+
+  - name: Palmetto State Armory
+    aliases: [PSA, Palmetto State]
+    domain: palmettostatearmory.com
+    # Reports range from about $12 to $30 for ammo. Watch for their free-shipping promos.
+    shipping: {flat: 19.99, verified: false}
+    pages:
+      9mm: [https://palmettostatearmory.com/9mm-ammo.html]
+      12ga: [https://palmettostatearmory.com/12-gauge-ammo.html]
+      762x54r: [https://palmettostatearmory.com/7-62x54r-ammo.html]
+
+  - name: MidwayUSA
+    aliases: [Midway USA, Midway]
+    domain: midwayusa.com
+    shipping: {flat: 14.99, verified: false}
+    pages:
+      9mm: ["https://www.midwayusa.com/s?searchTerm=9mm%20fmj"]
+      12ga: ["https://www.midwayusa.com/s?searchTerm=12%20gauge%201-1%2F4%20oz"]
+      762x54r: ["https://www.midwayusa.com/s?searchTerm=7.62x54r"]
+
+  - name: Sportsman's Guide
+    aliases: [Sportsmans Guide, SportsmansGuide]
+    domain: sportsmansguide.com
+    shipping: {flat: 14.99, verified: false}
+    pages:
+      9mm: ["https://www.sportsmansguide.com/searchresults?keyword=9mm%20fmj"]
+      12ga: ["https://www.sportsmansguide.com/searchresults?keyword=12%20gauge%201%201%2F4%20oz"]
+      762x54r: ["https://www.sportsmansguide.com/searchresults?keyword=7.62x54r"]
+
+  - name: Simmons Sporting Goods
+    aliases: [Simmons]
+    domain: simmonssportinggoods.com
+    shipping: {flat: 14.99, verified: false}
+    pages:
+      9mm: ["https://www.simmonssportinggoods.com/search.php?search_query=9mm+fmj"]
+      12ga: ["https://www.simmonssportinggoods.com/search.php?search_query=12+gauge+1+1%2F4+oz"]
+      762x54r: ["https://www.simmonssportinggoods.com/search.php?search_query=7.62x54r"]
+
+  - name: Ammunition Depot
+    aliases: [AmmunitionDepot, Ammo Depot]
+    domain: ammunitiondepot.com
+    shipping: {flat: 14.99, verified: false}
+    pages:
+      9mm: [https://www.ammunitiondepot.com/9mm-ammo]
+      12ga: [https://www.ammunitiondepot.com/12-gauge-ammo]
+      762x54r: [https://www.ammunitiondepot.com/7-62x54r-ammo]
+
+# Aggregators list many stores. The retailer name is read from each row and
+# matched against the list above. Unknown stores get default_shipping.
+aggregators:
+  - name: AmmoSeek
+    pages:
+      9mm: [https://ammoseek.com/ammo/9mm-luger]
+      12ga: [https://ammoseek.com/ammo/12-gauge]
+      762x54r: [https://ammoseek.com/ammo/7.62x54mmr]
+  - name: gun.deals
+    pages:
+      9mm: ["https://gun.deals/search?keys=9mm%20fmj"]
+      12ga: ["https://gun.deals/search?keys=12%20gauge%201%201%2F4%20oz"]
+      762x54r: ["https://gun.deals/search?keys=7.62x54r"]

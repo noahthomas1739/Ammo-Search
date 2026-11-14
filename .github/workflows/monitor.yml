@@ -1,0 +1,73 @@
+name: Ammo deal monitor
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"   # check every 6 hours
+    - cron: "41 13 * * *"    # daily GOOD-deal digest (13:41 UTC = 7:41 am Central standard time)
+    - cron: "23 15 1 * *"    # monthly trend report, 1st of the month
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "What to run"
+        type: choice
+        options: [check, digest, monthly, doctor, test-alert]
+        default: check
+
+permissions:
+  contents: write   # to commit state/state.json (dedupe + price history)
+
+concurrency:
+  group: ammo-monitor
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Pick command
+        id: cmd
+        run: |
+          case "${{ github.event.schedule }}" in
+            "41 13 * * *") echo "command=digest" >> "$GITHUB_OUTPUT" ;;
+            "23 15 1 * *") echo "command=monthly" >> "$GITHUB_OUTPUT" ;;
+            "") echo "command=${{ inputs.command }}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "command=check" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Run
+        env:
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM: ${{ secrets.TWILIO_FROM }}
+          ALERT_PHONE: ${{ secrets.ALERT_PHONE }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+        run: python -m ammo_finder ${{ steps.cmd.outputs.command }}
+
+      - name: Save state
+        if: always()
+        run: |
+          git config user.name "ammo-monitor[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          if ! git diff --cached --quiet; then
+            git commit -m "Update monitor state [skip ci]"
+            for i in 1 2 3; do git pull --rebase && git push && break; sleep 5; done
+          fi
+
