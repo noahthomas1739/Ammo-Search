@@ -13,7 +13,7 @@ A 440-round 7.62x54R can also counts as GOOD at ≤$240 delivered and GREAT at �
 
 ## How it behaves
 
-- **GREAT / EXCEPTIONAL**: alerts you right away. The same deal is not re-sent unless it drops another 0.5¢/rd, moves up a tier, or is still live a week later.
+- **GREAT / EXCEPTIONAL**: emailed right away. The same deal is not re-sent unless it drops another 0.5¢/rd, moves up a tier, or is still live a week later.
 - **GOOD**: added to a daily digest, sent around 7:40 am Central and only if there's something in it.
 - **Nothing qualifies**: nothing is sent.
 - **Monthly** (1st of the month): for each caliber, whether prices went up or down versus the prior month, with suggested new thresholds if the market moved 5% or more.
@@ -25,15 +25,19 @@ A 440-round 7.62x54R can also counts as GOOD at ≤$240 delivered and GREAT at �
 
 ## Setup (about 10 minutes)
 
-### 1. Pick how you want to be alerted
+### 1. Set up email alerts (Gmail)
 
-Add these as repository secrets: **Settings → Secrets and variables → Actions → New repository secret**. You can set up more than one.
+1. Turn on 2-Step Verification for your Google account if it isn't already on (myaccount.google.com → Security).
+2. Create an **App Password** at myaccount.google.com/apppasswords. Name it "ammo monitor" and copy the 16-character password. Your normal Gmail password will not work.
+3. In this repo, go to **Settings → Secrets and variables → Actions → New repository secret** and add:
+   - `SMTP_USER` = your Gmail address
+   - `SMTP_PASSWORD` = the 16-character App Password
 
-**Option A: ntfy push notifications (easiest, free).** Install the ntfy app on your phone and subscribe to a hard-to-guess topic name, e.g. `ammo-7f3k29x`. Then add the secret `NTFY_TOPIC` = that name. Anyone who knows the topic can read it, so make it random.
+Alerts are emailed to that same Gmail address. To send them somewhere else (or to several addresses, comma-separated), also add `ALERT_EMAIL`. For a provider other than Gmail, add `SMTP_HOST` (and `SMTP_PORT` if it isn't 587).
 
-**Option B: real SMS through Twilio (about $1/month plus a fraction of a cent per text).** Add the secrets `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (your Twilio number, `+1...`), and `ALERT_PHONE` (your cell, `+1...`). US numbers must be registered (A2P 10DLC or toll-free verification) before Twilio will deliver texts.
+Secrets are encrypted and never appear in the public repo or the run logs.
 
-**Option C: email.** Add the secrets `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASSWORD`, and `ALERT_EMAIL`. With Gmail, use an app password. `ALERT_EMAIL` can be a carrier email-to-text address if your carrier still supports one.
+*Optional extra channels:* `NTFY_TOPIC` for ntfy phone push notifications, or `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` / `ALERT_PHONE` for real SMS through Twilio (US numbers must be registered with Twilio first). Every configured channel gets every alert.
 
 ### 2. Test the alerts
 
@@ -74,4 +78,5 @@ python -m ammo_finder check --dry-run      # full run, print alerts instead of s
 - **Scraping is best effort.** Store pages are read generically (embedded product data, tables, product cards) rather than with per-store code, so layout changes break less often. Some stores will still block automated requests or need URL fixes. Re-run `doctor` if alerts go quiet. If no page returns products for 36 hours, the bot sends a "no data" warning (at most every 3 days).
 - **Stock quantity** is only shown when the store displays it. Otherwise the alert says "qty not shown".
 - **Titles must state the specs.** A 12 ga load whose title doesn't state velocity is still alerted, with a "verify velocity" note. A 1-1/8 oz load must state 1250+ fps.
-- **GitHub schedules run late**, often by 5–30 minutes. GitHub also pauses scheduled workflows in repos with no activity for 60 days. If that happens, re-enable the workflow in the Actions tab.
+- **GitHub schedules run late**, often by 5–30 minutes.
+- **The 60-day pause is handled.** GitHub pauses scheduled workflows in public repos after 60 days without activity. Each run re-enables the workflow through GitHub's API, which resets that timer. If it ever does get paused (for example, Actions was turned off), turn it back on under **Actions → Ammo deal monitor → Enable workflow**.

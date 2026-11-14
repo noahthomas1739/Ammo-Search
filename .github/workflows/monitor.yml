@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write   # to commit state/state.json (dedupe + price history)
+  actions: write    # to keep this schedule from being auto-disabled (see last step)
 
 concurrency:
   group: ammo-monitor
@@ -71,3 +72,12 @@ jobs:
             for i in 1 2 3; do git pull --rebase && git push && break; sleep 5; done
           fi
 
+
+      # GitHub disables scheduled workflows in public repos after 60 days without
+      # repo activity. Re-enabling through the API resets that 60-day timer, so
+      # doing it every run keeps the schedule alive indefinitely.
+      - name: Keep schedule alive
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable monitor.yml --repo "${{ github.repository }}" || true

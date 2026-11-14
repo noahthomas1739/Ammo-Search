@@ -3,8 +3,9 @@
 
   Twilio SMS:   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM, ALERT_PHONE
   ntfy push:    NTFY_TOPIC  (optional NTFY_SERVER, default https://ntfy.sh)
-  Email/SMTP:   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, ALERT_EMAIL
-                (ALERT_EMAIL may be a carrier email-to-text address)
+  Email:        SMTP_USER + SMTP_PASSWORD is enough for Gmail (use an App Password);
+                mail goes to SMTP_USER unless ALERT_EMAIL is set (comma-separated list).
+                Other providers: also set SMTP_HOST (and SMTP_PORT if not 587).
 
 Set DRY_RUN=1 to print instead of sending.
 """
@@ -31,7 +32,7 @@ def channels() -> list[str]:
         out.append("twilio")
     if _env("NTFY_TOPIC"):
         out.append("ntfy")
-    if _env("SMTP_HOST", "ALERT_EMAIL"):
+    if _env("SMTP_USER", "SMTP_PASSWORD") or _env("SMTP_HOST", "ALERT_EMAIL"):
         out.append("email")
     return out
 
@@ -75,13 +76,14 @@ def _email(title: str, body: str) -> None:
     msg = EmailMessage()
     msg["Subject"] = title
     msg["From"] = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER") or "ammo-monitor@localhost"
-    msg["To"] = os.environ["ALERT_EMAIL"]
+    msg["To"] = os.environ.get("ALERT_EMAIL") or os.environ["SMTP_USER"]
     msg.set_content(body)
-    port = int(os.environ.get("SMTP_PORT", "587"))
+    host = os.environ.get("SMTP_HOST") or "smtp.gmail.com"
+    port = int(os.environ.get("SMTP_PORT") or "587")
     if port == 465:
-        s = smtplib.SMTP_SSL(os.environ["SMTP_HOST"], port, timeout=30)
+        s = smtplib.SMTP_SSL(host, port, timeout=30)
     else:
-        s = smtplib.SMTP(os.environ["SMTP_HOST"], port, timeout=30)
+        s = smtplib.SMTP(host, port, timeout=30)
         s.starttls()
     with s:
         if os.environ.get("SMTP_USER"):

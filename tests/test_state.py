@@ -79,3 +79,25 @@ def test_monthly_report(cfg):
     assert "UP +11.1%" in body and "GOOD 25.0¢→28.0¢" in body
     assert "Never reached GOOD" in body
     assert "7.62x54R: avg low 50.0¢/rd" in body and "No prior month" in body
+
+
+def test_gmail_defaults(monkeypatch):
+    from ammo_finder import notify
+    for k in ["TWILIO_ACCOUNT_SID", "NTFY_TOPIC", "SMTP_HOST", "ALERT_EMAIL"]:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("SMTP_USER", "me@gmail.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "x")
+    assert notify.channels() == ["email"]
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout): sent["host"] = (host, port)
+        def starttls(self): pass
+        def login(self, u, p): sent["login"] = u
+        def send_message(self, m): sent["to"] = m["To"]
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    monkeypatch.setattr(notify.smtplib, "SMTP", FakeSMTP)
+    notify._email("t", "b")
+    assert sent == {"host": ("smtp.gmail.com", 587), "login": "me@gmail.com", "to": "me@gmail.com"}
