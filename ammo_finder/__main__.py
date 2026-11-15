@@ -150,8 +150,16 @@ def main(argv=None) -> int:
     elif args.command == "doctor":
         run_doctor(cfg, args.only)
     elif args.command == "test-alert":
+        if not notify.channels() and not os.environ.get("DRY_RUN"):
+            have = [k for k in ("SMTP_USER", "SMTP_PASSWORD", "SMTP_HOST", "ALERT_EMAIL", "NTFY_TOPIC", "TWILIO_ACCOUNT_SID") if os.environ.get(k)]
+            print(
+                "ERROR: no alert channel is configured. For Gmail, add BOTH repository secrets "
+                "SMTP_USER (your Gmail address) and SMTP_PASSWORD (a Google App Password).\n"
+                f"Secrets this run received: {', '.join(have) or 'none'}"
+            )
+            return 1
         used = notify.send("Ammo monitor test", "Test alert from your ammo deal monitor. If you got this, alerts work.", urgent=True)
-        print("Channels:", used or "none configured")
+        print("Channels:", used)
     return 0
 
 
