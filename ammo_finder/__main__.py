@@ -6,6 +6,7 @@
   python -m ammo_finder auto       # check + digest/monthly if due (for a Mac that isn't always on)
   python -m ammo_finder doctor     # show how many products each configured page yields
   python -m ammo_finder discover   # look for public feeds / sitemaps / JSON on each site
+  python -m ammo_finder sources    # which sources work, which fail (and how), across runs
   python -m ammo_finder test-alert # send a test message on every configured channel
 """
 from __future__ import annotations
@@ -25,7 +26,7 @@ from .models import TIER_ORDER, Deal
 from .report import format_alert, format_digest, monthly_report, cents
 from .rules import evaluate
 from .fetch import from_config
-from .sources import collect
+from .sources import collect, coverage
 from .state import State
 
 log = logging.getLogger("ammo_finder")
@@ -51,6 +52,8 @@ def run_check(cfg: dict, state: State, fetcher) -> dict:
 
     state.record_prices(obs)
     ok_pages = sum(1 for p in pages.values() if p["ok"] and p["count"] > 0)
+    cov = coverage(cfg, listings, pages)
+    state.record_sources(pages, cov)
     # healthy = at least one real product of the right kind was read (any price).
     # Pages full of menu items or junk don't count.
     state.record_health(sum(len(v) for v in obs.values()) > 0)
@@ -70,11 +73,13 @@ def run_check(cfg: dict, state: State, fetcher) -> dict:
 
     streak = state.needs_health_warning(alerts_cfg)
     if streak:
-        failing = [f"{p['source']} {p['caliber']}: {p['error'] or 'no products found'}" for p in pages.values() if not (p["ok"] and p["count"])]
+        lines = [f"{p['source']} {p['caliber']} ({p['via']}): {p['category']}, {p['error_kind']}" for p in pages.values() if not p["ok"]]
         notify.send(
-            "Ammo monitor: no data",
-            f"The last {streak} checks found no usable products on any store page, so deals may be missed.\n"
-            "Run 'doctor' to see which pages fail.\n\n" + "\n".join(failing[:15]),
+            "Ammo monitor: couldn't read prices",
+            f"The last {streak} checks couldn't read any matching products, so deals may be missed. "
+            "This means the stores couldn't be checked, not that there are no deals.\n"
+            "temporary = will retry automatically; restricted = the site refuses automated access "
+            "(not worked around, re-checked weekly).\n\n" + "\n".join(lines[:20]),
         )
 
     state.prune()
@@ -144,7 +149,7 @@ def run_auto(cfg: dict, state: State, fetcher) -> None:
         state.mark_digest()
         state.save()
     if state.monthly_due():
-        title, body = monthly_report(state.data["history"], cfg, date.today())
+        title, body = monthly_report(state.data["history"], cfg, date.today(), state.data.get("coverage"))
         notify.send(title, body)
         state.mark_monthly()
     state.save()
@@ -160,12 +165,35 @@ def run_doctor(cfg: dict, fetcher, only: Optional[str]) -> None:
         print(f"{p['source']:<24} {p['caliber']:<8} {p.get('via', ''):<8} {status}\n    {url}")
         for l in by_src.get(url, [])[:3]:
             print(f"      - ${l.price:.2f} | {l.rounds or '?'} rds | {'in stock' if l.in_stock else 'OOS'} | {l.retailer} | {l.title[:70]}")
+    print("\nCoverage this run (a store that couldn't be reached is NOT evidence of no deals):")
+    for name, c in coverage(cfg, listings, pages).items():
+        extra = ""
+        if c["direct_routes"]:
+            extra = "via " + ", ".join(c["direct_routes"])
+        elif c["alternatives"]:
+            extra = "via " + ", ".join(f"{k} ({v} listings)" for k, v in c["alternatives"].items())
+        elif c["failures"]:
+            extra = "; ".join(c["failures"][:3])
+        print(f"  {name:<24} {c['status']:<20} {extra}")
     _step_summary({"doctor": True, "pages_ok": sum(1 for p in pages.values() if p["count"])}, pages, [])
+
+
+def run_sources(state: State) -> None:
+    """What has worked, what hasn't, and when, across all past runs."""
+    print("Retailers (how each was last reached):")
+    for name, c in sorted(state.data.get("coverage", {}).items()):
+        print(f"  {name:<24} {c['status']:<20} last covered: {c.get('last_covered', 'never')[:16]}"
+              f"  {'; '.join(c.get('failures', [])[:2])}")
+    print("\nRoutes needing an alternative (failing now):")
+    rows = [(k, v) for k, v in state.data.get("sources", {}).items() if v.get("status") not in ("ok",)]
+    for k, v in sorted(rows, key=lambda kv: (kv[1].get("source", ""), kv[0])):
+        print(f"  {v.get('source', ''):<22} {v.get('via', ''):<8} {v.get('status', ''):<11} {v.get('last_error', '')}"
+              f"  fails x{v.get('fails', 0)}, last ok {v.get('last_ok', 'never')[:16]}\n      {k}")
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ammo_finder")
-    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "doctor", "discover", "test-alert"])
+    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "doctor", "discover", "sources", "test-alert"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--state", default=os.environ.get("AMMO_STATE") or "state/state.json")
     ap.add_argument("--only", help="doctor: only sources whose name contains this")
@@ -195,10 +223,12 @@ def _dispatch(args, cfg: dict, state: State, fetcher) -> int:
         run_digest(cfg, state)
         state.save()
     elif args.command == "monthly":
-        title, body = monthly_report(state.data["history"], cfg, date.today())
+        title, body = monthly_report(state.data["history"], cfg, date.today(), state.data.get("coverage"))
         notify.send(title, body)
     elif args.command == "doctor":
         run_doctor(cfg, fetcher, args.only)
+    elif args.command == "sources":
+        run_sources(state)
     elif args.command == "discover":
         from .discover import run_discover
         run_discover(cfg, fetcher)

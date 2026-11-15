@@ -10,39 +10,88 @@ from ammo_finder.sources.feeds import parse_feed, parse_sitemap, sitemap_product
 
 @pytest.fixture
 def fx(tmp_path, monkeypatch):
-    f = Fetcher(cache_dir=str(tmp_path), min_delay=0, max_delay=0, use_browser=False)
-    calls = []
+    f = Fetcher(cache_dir=str(tmp_path), min_delay=0, max_delay=0, use_browser=False, backoff_seconds=1)
+    calls, slept = [], []
+    monkeypatch.setattr(F.time, "sleep", lambda s: slept.append(s))
     pages = {
         "https://shop.test/robots.txt": "User-agent: *\nDisallow: /search\nSitemap: https://shop.test/sitemap.xml\n",
         "https://shop.test/a": "<html>ok</html>",
-        "https://blocked.test/robots.txt": "",
     }
+    script = {}  # url -> list of errors to raise before succeeding
 
     def fake(url, kind):
         calls.append(url)
+        if script.get(url):
+            raise script[url].pop(0)
         if url.startswith("https://blocked.test/p"):
-            raise FetchError(f"{url}: HTTP 403")
+            raise F._status_error(url, 403)
+        if url == "https://walled.test/robots.txt":
+            raise F._status_error(url, 403)
         if url not in pages:
-            raise FetchError(f"{url}: HTTP 404")
+            raise F._status_error(url, 404)
         return pages[url]
 
     monkeypatch.setattr(f, "_http_get", fake)
-    return f, calls
+    return f, calls, slept, pages, script
 
 
-def test_cache_robots_and_block(fx):
-    f, calls = fx
+def test_cache_robots_and_restricted(fx):
+    f, calls, slept, pages, script = fx
     assert f.get("https://shop.test/a") == "<html>ok</html>"
     assert f.get("https://shop.test/a") == "<html>ok</html>"
-    assert calls.count("https://shop.test/a") == 1 and f.last_from_cache  # second read from cache
-    with pytest.raises(FetchError, match="robots.txt"):
+    assert calls.count("https://shop.test/a") == 1 and f.last_from_cache
+    with pytest.raises(FetchError) as e:
         f.get("https://shop.test/search?q=9mm")
+    assert e.value.kind == "robots_disallowed" and e.value.category == "restricted"
     assert "https://shop.test/search?q=9mm" not in calls  # never requested
-    with pytest.raises(FetchError, match="403"):
+    with pytest.raises(FetchError) as e:
         f.get("https://blocked.test/p1")
-    with pytest.raises(FetchError, match="skipped"):
-        f.get("https://blocked.test/p2")  # host blocked for the rest of the run
+    assert e.value.kind == "forbidden" and e.value.category == "restricted"
+    assert calls.count("https://blocked.test/p1") == 1  # restricted: not retried
+    with pytest.raises(FetchError, match="earlier this run"):
+        f.get("https://blocked.test/p2")
     assert "https://blocked.test/p2" not in calls
+    # robots.txt itself refused -> treat the whole site as off limits
+    with pytest.raises(FetchError) as e:
+        f.get("https://walled.test/x")
+    assert e.value.kind == "robots_disallowed" and "https://walled.test/x" not in calls
+
+
+def test_temporary_errors_retry_with_backoff(fx):
+    f, calls, slept, pages, script = fx
+    pages["https://shop.test/b"] = "fine"
+    script["https://shop.test/b"] = [F.FetchError("https://shop.test/b", "timeout"), F._status_error("https://shop.test/b", 503)]
+    assert f.get("https://shop.test/b") == "fine"
+    assert calls.count("https://shop.test/b") == 3 and len(slept) == 2 and slept[1] > slept[0]
+
+
+def test_rate_limit_honors_retry_after(fx):
+    f, calls, slept, pages, script = fx
+    pages["https://shop.test/c"] = "ok"
+    script["https://shop.test/c"] = [F._status_error("https://shop.test/c", 429, retry_after=30)]
+    assert f.get("https://shop.test/c") == "ok" and 30 in slept
+    # a Retry-After longer than we're willing to wait: give up for this run, don't cache, stop hitting the site
+    script["https://shop.test/d"] = [F._status_error("https://shop.test/d", 429, retry_after=3600)]
+    with pytest.raises(FetchError) as e:
+        f.get("https://shop.test/d")
+    assert e.value.kind == "rate_limited" and "next run" in e.value.detail
+    with pytest.raises(FetchError, match="earlier this run"):
+        f.get("https://shop.test/a2")
+    assert f._cache_read("https://shop.test/d", "html", 999) is None  # temporary: next run tries again
+
+
+def test_temporary_failure_not_cached(fx):
+    f, calls, slept, pages, script = fx
+    script["https://shop.test/e"] = [F.FetchError("https://shop.test/e", "network")] * 3
+    with pytest.raises(FetchError):
+        f.get("https://shop.test/e")
+    assert f._cache_read("https://shop.test/e", "html", 999) is None
+
+
+def test_bot_check_detected():
+    assert F._looks_blocked("<html><head><title>Just a moment...</title>")
+    assert F._looks_blocked('<html><div class="g-recaptcha"></div></html>')
+    assert not F._looks_blocked("<html><title>9mm Ammo</title>" + "x" * 70000 + "g-recaptcha")
 
 
 def test_pacing(tmp_path, monkeypatch):
@@ -102,3 +151,32 @@ def test_collect_sitemap_product_pages(cfg):
             "https://www.midwayusa.com/product/fiocchi-12-gauge-1-1-4-oz-7-5": fixture("jsonld.html")}
     listings, report = collect(cfg, lambda url, kind="html", ttl=None: docs[url])
     assert len(listings) == 1 and listings[0].price == 119.99
+
+
+def test_coverage_tracks_routes(cfg):
+    from ammo_finder.sources import coverage
+    cfg = dict(cfg)
+    cfg["retailers"] = [dict(r, enabled=True) for r in cfg["retailers"]]
+    feed_items = parse_feed(RSS, "gun.deals", cfg["retailers"], cfg["marketplace_sellers"])
+    for l in feed_items:
+        l.source = "https://gun.deals/rss.xml"
+    report = {
+        "https://gun.deals/rss.xml": {"source": "gun.deals", "caliber": "all", "via": "feed", "count": 2, "ok": True, "error": "", "error_kind": "", "category": "ok"},
+        "https://www.targetsportsusa.com/a": {"source": "Target Sports USA", "caliber": "9mm", "via": "page", "count": 0, "ok": False, "error": "x", "error_kind": "forbidden", "category": "restricted"},
+        "https://www.bulkammo.com/a": {"source": "Bulk Ammo", "caliber": "9mm", "via": "page", "count": 0, "ok": False, "error": "x", "error_kind": "timeout", "category": "temporary"},
+        "https://www.midwayusa.com/a": {"source": "MidwayUSA", "caliber": "9mm", "via": "page", "count": 0, "ok": False, "error": "x", "error_kind": "forbidden", "category": "restricted"},
+    }
+    cov = coverage(cfg, feed_items, report)
+    assert cov["Target Sports USA"]["status"] == "alternative"
+    assert cov["Target Sports USA"]["alternatives"] == {"gun.deals": 1}
+    assert cov["Bulk Ammo"]["status"] == "temporary failure"
+    assert cov["MidwayUSA"]["status"] == "restricted"
+
+
+def test_robots_temporary_failure_is_not_restriction(fx):
+    f, calls, slept, pages, script = fx
+    script["https://flaky.test/robots.txt"] = [F.FetchError("https://flaky.test/robots.txt", "timeout")] * 3
+    with pytest.raises(FetchError) as e:
+        f.get("https://flaky.test/x")
+    assert e.value.category == "temporary" and "https://flaky.test/x" not in calls
+    assert f._cache_read("https://flaky.test/x", "html", 999) is None

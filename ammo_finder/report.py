@@ -76,7 +76,7 @@ def month_stats(hist: dict, ym: str) -> Optional[dict]:
     return {"avg_low": sum(mins) / len(mins), "lowest": min(mins), "days": len(days)}
 
 
-def monthly_report(history: dict, cfg: dict, today: date) -> tuple[str, str]:
+def monthly_report(history: dict, cfg: dict, today: date, coverage: Optional[dict] = None) -> tuple[str, str]:
     """Compares last full month against the month before it."""
     first = today.replace(day=1)
     last_month = _prev_month(_month_key(first))
@@ -112,4 +112,13 @@ def monthly_report(history: dict, cfg: dict, today: date) -> tuple[str, str]:
         elif tcfg.get("great") and cur["avg_low"] <= tcfg["great"]:
             lines.append(f"  Prices sat at or below GREAT most of the month. You could tighten thresholds.")
         lines.append("")
+    if coverage:
+        by = {}
+        for name, c in coverage.items():
+            by.setdefault(c.get("status", "?"), []).append(name)
+        lines.append("Sources last checked (prices above only reflect stores that could be read):")
+        for status in ("direct", "alternative", "temporary failure", "restricted", "no readable listings", "disabled"):
+            if by.get(status):
+                lines.append(f"  {status}: {', '.join(sorted(by[status]))}")
+        lines.append("Days with no readable data are left out, not counted as price changes.")
     return f"Ammo monthly report {last_month}", "\n".join(lines).strip()

@@ -25,7 +25,7 @@ def _parse(ts: str) -> datetime:
 class State:
     def __init__(self, path: str):
         self.path = path
-        self.data = {"alerted": {}, "digest_pending": {}, "digest_sent": {}, "history": {}, "health": {}}
+        self.data = {"alerted": {}, "digest_pending": {}, "digest_sent": {}, "history": {}, "health": {}, "sources": {}, "coverage": {}}
         if os.path.exists(path):
             with open(path) as f:
                 self.data.update(json.load(f))
@@ -106,6 +106,28 @@ class State:
         cutoff = (at or now()) - timedelta(days=30)
         for k in ("alerted", "digest_sent"):
             self.data[k] = {key: v for key, v in self.data[k].items() if _parse(v["ts"]) >= cutoff}
+
+    # ---------------------------------------------------- per-source tracking
+    def record_sources(self, report: dict, cov: dict, at: Optional[datetime] = None) -> None:
+        """Remember, per route (feed / sitemap / page URL), when it last worked and
+        how it last failed; and per retailer, how it was last reached."""
+        ts = _ts(at or now())
+        src = self.data.setdefault("sources", {})
+        for key, r in report.items():
+            e = src.setdefault(key, {"fails": 0})
+            e.update({"source": r["source"], "caliber": r["caliber"], "via": r["via"], "last_attempt": ts})
+            if r["ok"]:
+                e.update({"last_ok": ts, "fails": 0, "last_count": r["count"], "status": "ok" if r["count"] else "ok, no listings read"})
+            else:
+                e.update({"fails": e.get("fails", 0) + 1, "status": r["category"], "last_error": r["error_kind"], "last_error_detail": r["error"][:160]})
+        covd = self.data.setdefault("coverage", {})
+        for name, c in cov.items():
+            e = covd.setdefault(name, {})
+            e.update({"status": c["status"], "routes": c["direct_routes"], "alternatives": c["alternatives"], "failures": c["failures"], "last_checked": ts})
+            if c["status"] == "direct":
+                e["last_direct"] = ts
+            if c["status"] in ("direct", "alternative"):
+                e["last_covered"] = ts
 
     # ---------------------------------------------------- source health
     def record_health(self, any_success: bool, at: Optional[datetime] = None) -> None:

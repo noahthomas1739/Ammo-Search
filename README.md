@@ -72,26 +72,42 @@ Most stores refuse requests from GitHub's servers. From a home internet connecti
 
 Change thresholds by editing `config.yaml` on GitHub. The Mac pulls the change before each run. To see what the monitor is doing, run `tail -f ~/Library/Application\ Support/AmmoFinder/monitor.log`. To remove it, run `bash ~/ammo-search/mac/uninstall.sh`.
 
-### How pages are read
+### How sources are read
 
-In order of preference, for each store in `config.yaml`:
+**1. Public, machine-readable sources come first.** In order, for each store in `config.yaml`:
+   - `feeds:` RSS/Atom deal feeds (gun.deals' site feed is configured).
+   - `sitemaps:` the XML sitemap the store lists in robots.txt. Product URLs that match your calibers are picked out, and only those product pages are loaded (at most `max_products` new ones per run).
+   - `pages:` category or search pages, loaded in a standard headless Chromium so pages that build their list with JavaScript still work.
 
-1. **`feeds:`** RSS/Atom deal feeds, read directly.
-2. **`sitemaps:`** the store's XML sitemap. Product URLs matching your calibers are picked out, and only those product pages are loaded (at most `max_products` new ones per run).
-3. **`pages:`** category or search pages, loaded in a standard headless Chromium so pages that build their product list with JavaScript still work.
+**2. Every failure is identified and handled by type:**
 
-Every page load follows the same rules:
+| Failure | Category | What the monitor does |
+|---|---|---|
+| timeout, network error, HTTP 5xx | temporary | retries after 15 s, then 45 s; not cached, so the next run tries again |
+| HTTP 429 (rate limited) | temporary | waits the site's `Retry-After` if it's 2 minutes or less, otherwise stops for that site this run; tries next run |
+| HTTP 401/403, CAPTCHA or bot-check page | restricted | does not retry or work around it; remembers the answer for 7 days, then checks again |
+| robots.txt disallows the URL (or robots.txt itself is refused) | restricted | never requests it; checked again weekly |
+| HTTP 404/410 | not found | the URL is wrong or gone; fix it in `config.yaml` |
 
-- **robots.txt:** each site's rules about what automated tools may load are obeyed.
-- **Pacing:** loads on the same site are 8–20 seconds apart, at random.
-- **Cache:** everything is cached for 5 hours, so re-running `doctor` or `check` doesn't hit the stores again.
-- **Refusals:** a site that answers with a 403 or a bot check ("Just a moment...") is skipped for the rest of the run. It is never retried or worked around.
+Pages on the same site load 8–20 seconds apart, and every answer is cached for 5 hours.
 
-To see which sites publish feeds, sitemaps or JSON, run:
+**3. Alternatives.** When a store can't be read directly, listings for it that come through an authorized aggregator feed (gun.deals RSS) still count. The coverage report shows the store as reached via an "alternative".
+
+**4. Tracking.** Every run records, for each route (feed, sitemap, page), when it last worked and how it last failed. For each store it records whether it was reached **directly**, through an **alternative**, or not at all (**temporary failure** / **restricted**). To see it:
+
+```bash
+"$HOME/Library/Application Support/AmmoFinder/venv/bin/python" -m ammo_finder sources
+```
+
+**5. A failed fetch is never read as "no deals".** Stores that couldn't be read are listed as unreachable in `doctor`, the "couldn't read prices" warning and the monthly report. Days without data are left out of price trends. `discover` reports locations it couldn't check as UNKNOWN, not "none".
+
+To look for feeds, sitemaps or JSON that each site publishes:
 
 ```bash
 "$HOME/Library/Application Support/AmmoFinder/venv/bin/python" -m ammo_finder discover
 ```
+
+**AmmoSeek** has no public API or feed and refuses automated requests. Its own price alerts (free account, email or text) are the authorized way to cover it.
 
 ## Files
 

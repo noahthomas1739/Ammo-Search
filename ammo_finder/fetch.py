@@ -1,24 +1,32 @@
-"""Polite page fetching.
+"""Polite, rule-following page fetching.
 
 - HTML pages load in a standard headless Chromium (Playwright), so pages that
-  build their product lists with JavaScript can be read. No stealth tweaks: the
-  browser identifies itself as headless Chrome.
+  build their product lists with JavaScript can be read. No stealth settings:
+  the browser identifies itself as headless Chrome.
 - Feeds, sitemaps, JSON and robots.txt use plain HTTP with an honest user agent.
-- robots.txt is obeyed. A URL a site disallows is skipped.
-- Every response (including refusals) is cached on disk, so running the monitor,
-  `doctor`, etc. several times in a row doesn't re-hit the store.
-- Waits a random, human-like 8-20 s between loads on the same site.
-- A 403/429 or a bot-check page marks the site as blocked for the rest of the
-  run. It is skipped, never retried or worked around.
+- robots.txt is obeyed.
+- Random 8-20 s pause between loads on the same site; responses cached on disk.
+
+Every failure is classified (see FAILURE_KINDS) and handled by kind:
+  temporary  (429, 5xx, timeout, network): retried with backoff, honoring
+             Retry-After; never cached, so the next run tries again.
+  restricted (401/403, CAPTCHA / bot check, robots.txt disallow): the site has
+             said no to automated access. Not retried or worked around; the
+             answer is cached and re-checked after `restricted_recheck_days`.
+  not_found  (404/410): the URL is wrong or gone; cached for a day.
+A failed fetch only means *this* route didn't work. It is never treated as
+"no products" or "no deals".
 """
 from __future__ import annotations
 
+import email.utils
 import gzip
 import hashlib
 import json
 import logging
 import os
 import random
+import re
 import time
 from typing import Optional
 from urllib.parse import urlparse
@@ -29,11 +37,53 @@ import requests
 log = logging.getLogger(__name__)
 
 FEED_UA = "AmmoFinder/1.0 (personal price monitor; low volume)"
-_BLOCK_TITLES = ("just a moment", "attention required", "access denied", "are you a robot", "pardon our interruption")
+_BLOCK_TITLES = ("just a moment", "attention required", "access denied", "are you a robot", "pardon our interruption", "captcha", "verify you are human")
+_CAPTCHA_MARKERS = re.compile(r"g-recaptcha|h-captcha|hcaptcha\.com|cf-turnstile|challenges\.cloudflare\.com|cf-chl|px-captcha|/captcha/", re.I)
+
+FAILURE_KINDS = {
+    "rate_limited": "temporary",
+    "server_error": "temporary",
+    "timeout": "temporary",
+    "network": "temporary",
+    "forbidden": "restricted",
+    "bot_check": "restricted",
+    "robots_disallowed": "restricted",
+    "not_found": "not_found",
+    "other": "temporary",
+}
 
 
 class FetchError(Exception):
-    pass
+    def __init__(self, url: str, kind: str, detail: str = "", retry_after: Optional[float] = None):
+        self.url, self.kind, self.detail, self.retry_after = url, kind, detail, retry_after
+        super().__init__(f"{url}: {kind}{' (' + detail + ')' if detail else ''}")
+
+    @property
+    def category(self) -> str:
+        return FAILURE_KINDS.get(self.kind, "temporary")
+
+
+def _status_error(url: str, status: int, retry_after: Optional[float] = None) -> FetchError:
+    if status == 429:
+        return FetchError(url, "rate_limited", "HTTP 429", retry_after)
+    if status in (401, 403):
+        return FetchError(url, "forbidden", f"HTTP {status}")
+    if status in (404, 410):
+        return FetchError(url, "not_found", f"HTTP {status}")
+    if status >= 500:
+        return FetchError(url, "server_error", f"HTTP {status}", retry_after)
+    return FetchError(url, "other", f"HTTP {status}")
+
+
+def _parse_retry_after(v: Optional[str]) -> Optional[float]:
+    if not v:
+        return None
+    if v.strip().isdigit():
+        return float(v.strip())
+    try:
+        return max(0.0, email.utils.parsedate_to_datetime(v).timestamp() - time.time())
+    except (TypeError, ValueError):
+        return None
 
 
 class Fetcher:
@@ -45,15 +95,23 @@ class Fetcher:
         max_delay: float = 20,
         use_browser: bool = True,
         respect_robots: bool = True,
+        max_retries: int = 2,
+        backoff_seconds: float = 15,
+        max_retry_wait: float = 120,
+        restricted_recheck_days: float = 7,
     ):
         self.cache_dir = cache_dir
         self.ttl = cache_hours * 3600
         self.delay = (min_delay, max_delay)
         self.use_browser = use_browser
         self.respect_robots = respect_robots
+        self.max_retries = max_retries
+        self.backoff = backoff_seconds
+        self.max_retry_wait = max_retry_wait
+        self.restricted_ttl = restricted_recheck_days * 86400
         self._last_hit: dict[str, float] = {}
-        self._robots: dict[str, Optional[RobotFileParser]] = {}
-        self._blocked: dict[str, str] = {}  # host -> reason, for this run
+        self._robots: dict = {}  # base -> RobotFileParser | None (no rules) | FetchError (temporary)
+        self._host_stop: dict[str, FetchError] = {}  # host -> reason to stop for this run
         self._pw = self._browser = self._page = None
         self.last_from_cache = False
         os.makedirs(cache_dir, exist_ok=True)
@@ -61,49 +119,69 @@ class Fetcher:
     # ------------------------------------------------------------ public
     def get(self, url: str, kind: str = "html", ttl: Optional[float] = None) -> str:
         """kind="html": rendered page (browser if available). kind="raw": the bytes as served (feeds, XML, JSON)."""
-        ttl = self.ttl if ttl is None else ttl
-        cached = self._cache_read(url, kind, ttl)
+        cached = self._cache_read(url, kind, self.ttl if ttl is None else ttl)
         self.last_from_cache = cached is not None
         if cached is not None:
             if cached.get("error"):
-                raise FetchError(cached["error"] + " (cached)")
+                e = cached["error"]
+                raise FetchError(url, e["kind"], f"{e.get('detail', '')}, cached answer".strip(", "))
             return cached["body"]
 
         host = urlparse(url).netloc.lower()
-        if host in self._blocked:
-            raise FetchError(f"{url}: skipped, site blocked automated requests earlier this run")
+        if host in self._host_stop:
+            prev = self._host_stop[host]
+            raise FetchError(url, prev.kind, f"skipped: site answered {prev.detail or prev.kind} earlier this run")
         if self.respect_robots and not self.allowed(url):
-            err = f"{url}: disallowed by the site's robots.txt"
-            self._cache_write(url, kind, error=err)
-            raise FetchError(err)
+            err = FetchError(url, "robots_disallowed", "robots.txt")
+            self._cache_error(url, kind, err)
+            raise err
 
-        self._pace(host)
-        try:
-            if kind == "html" and self.use_browser and _playwright_installed():
-                body = self._browser_get(url)
-            else:
-                body = self._http_get(url, kind)
-        except FetchError as e:
-            msg = str(e)
-            if "HTTP 403" in msg or "HTTP 429" in msg or "bot check" in msg:
-                self._blocked[host] = msg
-            if "HTTP " in msg or "bot check" in msg:  # a site's answer; connection errors aren't cached
-                self._cache_write(url, kind, error=msg)
-            raise
-        self._cache_write(url, kind, body=body)
-        return body
+        attempt = 0
+        while True:
+            self._pace(host)
+            try:
+                if kind == "html" and self.use_browser and _playwright_installed():
+                    body = self._browser_get(url)
+                else:
+                    body = self._http_get(url, kind)
+                self._cache_write(url, kind, body=body)
+                return body
+            except FetchError as e:
+                if e.category == "temporary" and attempt < self.max_retries:
+                    wait = e.retry_after if e.retry_after is not None else self.backoff * (3 ** attempt) * random.uniform(0.8, 1.2)
+                    if wait <= self.max_retry_wait:
+                        log.info("%s: %s, retrying in %.0fs", url, e.kind, wait)
+                        time.sleep(wait)
+                        attempt += 1
+                        continue
+                    e.detail += f", asked to wait {wait:.0f}s, will retry next run"
+                if e.category == "restricted" or e.kind == "rate_limited":
+                    self._host_stop[host] = e  # respect it: no more requests to this site this run
+                self._cache_error(url, kind, e)
+                raise
 
     def allowed(self, url: str) -> bool:
+        """robots.txt check. 404 = no rules published -> allowed; 401/403 = treated as
+        'no automated access'; a temporary failure raises (temporary), so the page is
+        simply tried again next run rather than being marked restricted."""
         p = urlparse(url)
         base = f"{p.scheme}://{p.netloc}"
         if base not in self._robots:
-            rp: Optional[RobotFileParser] = RobotFileParser()
+            rp = RobotFileParser()
             try:
                 rp.parse(self.robots_txt(base).splitlines())
-            except FetchError:
-                rp = None  # no readable robots.txt -> the site publishes no restrictions
+            except FetchError as e:
+                if e.kind == "not_found":
+                    rp = None
+                elif e.category == "temporary":
+                    self._robots[base] = e  # don't re-request this run; don't cache
+                    raise FetchError(url, e.kind, "robots.txt unavailable, will retry next run") from e
+                else:
+                    rp.parse(["User-agent: *", "Disallow: /"])
             self._robots[base] = rp
         rp = self._robots[base]
+        if isinstance(rp, FetchError):
+            raise FetchError(url, rp.kind, "robots.txt unavailable, will retry next run")
         return True if rp is None else rp.can_fetch("*", url)
 
     def robots_txt(self, base: str) -> str:
@@ -111,13 +189,13 @@ class Fetcher:
         cached = self._cache_read(url, "raw", 24 * 3600)
         if cached is not None:
             if cached.get("error"):
-                raise FetchError(cached["error"])
+                raise FetchError(url, cached["error"]["kind"], "cached answer")
             return cached["body"]
         self._pace(urlparse(url).netloc.lower())
         try:
             body = self._http_get(url, "raw")
         except FetchError as e:
-            self._cache_write(url, "raw", error=str(e))
+            self._cache_error(url, "raw", e)
             raise
         self._cache_write(url, "raw", body=body)
         return body
@@ -132,7 +210,7 @@ class Fetcher:
             pass
         self._pw = self._browser = self._page = None
 
-    def prune_cache(self, max_age_days: float = 3) -> None:
+    def prune_cache(self, max_age_days: float = 10) -> None:
         cutoff = time.time() - max_age_days * 86400
         for name in os.listdir(self.cache_dir):
             p = os.path.join(self.cache_dir, name)
@@ -154,16 +232,18 @@ class Fetcher:
     def _http_get(self, url: str, kind: str) -> str:
         try:
             r = requests.get(url, headers={"User-Agent": FEED_UA, "Accept-Language": "en-US,en;q=0.9"}, timeout=30)
+        except requests.Timeout as e:
+            raise FetchError(url, "timeout") from e
         except requests.RequestException as e:
-            raise FetchError(f"{url}: {type(e).__name__}") from e
+            raise FetchError(url, "network", type(e).__name__) from e
         if r.status_code != 200:
-            raise FetchError(f"{url}: HTTP {r.status_code}")
+            raise _status_error(url, r.status_code, _parse_retry_after(r.headers.get("Retry-After")))
         data = r.content
         if data[:2] == b"\x1f\x8b":
             data = gzip.decompress(data)
         body = data.decode(r.encoding or "utf-8", errors="replace")
         if kind == "html" and _looks_blocked(body):
-            raise FetchError(f"{url}: site shows a bot check")
+            raise FetchError(url, "bot_check", "CAPTCHA / bot check page")
         return body
 
     def _browser_get(self, url: str) -> str:
@@ -180,16 +260,16 @@ class Fetcher:
             except Exception:
                 pass  # some pages never go fully idle; what has loaded is enough
             status = resp.status if resp else 0
+            retry_after = _parse_retry_after((resp.headers or {}).get("retry-after")) if resp else None
             title = (self._page.title() or "").lower()
             html = self._page.content()
         except Exception as e:
-            raise FetchError(f"{url}: browser error {type(e).__name__}") from e
-        if status in (403, 429):
-            raise FetchError(f"{url}: HTTP {status}")
-        if any(t in title for t in _BLOCK_TITLES):
-            raise FetchError(f"{url}: site shows a bot check")
+            kind = "timeout" if "Timeout" in type(e).__name__ else "network"
+            raise FetchError(url, kind, f"browser: {type(e).__name__}") from e
+        if any(t in title for t in _BLOCK_TITLES) or _looks_blocked(html):
+            raise FetchError(url, "bot_check", "CAPTCHA / bot check page")
         if status >= 400:
-            raise FetchError(f"{url}: HTTP {status}")
+            raise _status_error(url, status, retry_after)
         return html
 
     def _cache_path(self, url: str, kind: str) -> str:
@@ -201,16 +281,27 @@ class Fetcher:
                 entry = json.load(f)
         except (OSError, ValueError):
             return None
+        if entry.get("error"):
+            ttl = entry.get("ttl", ttl)
         return entry if time.time() - entry.get("at", 0) < ttl else None
 
-    def _cache_write(self, url: str, kind: str, body: str = "", error: str = "") -> None:
+    def _cache_write(self, url: str, kind: str, body: str = "", error: Optional[dict] = None, ttl: Optional[float] = None) -> None:
         with open(self._cache_path(url, kind), "w") as f:
-            json.dump({"url": url, "at": time.time(), "body": body, "error": error}, f)
+            json.dump({"url": url, "at": time.time(), "body": body, "error": error, "ttl": ttl}, f)
+
+    def _cache_error(self, url: str, kind: str, e: FetchError) -> None:
+        if e.category == "temporary":
+            return  # next run should try again
+        ttl = self.restricted_ttl if e.category == "restricted" else 86400
+        self._cache_write(url, kind, error={"kind": e.kind, "detail": e.detail}, ttl=ttl)
 
 
 def _looks_blocked(body: str) -> bool:
-    head = body[:4000].lower()
-    return "cf-chl" in head or any(f"<title>{t}" in head for t in _BLOCK_TITLES)
+    head = body[:6000].lower()
+    if any(f"<title>{t}" in head for t in _BLOCK_TITLES):
+        return True
+    # a CAPTCHA widget on a short page = challenge page (product pages are long)
+    return bool(_CAPTCHA_MARKERS.search(body[:20000])) and len(body) < 60000
 
 
 def _playwright_installed() -> bool:
@@ -230,4 +321,8 @@ def from_config(cfg: dict, cache_dir: str) -> Fetcher:
         max_delay=f.get("max_delay_seconds", 20),
         use_browser=f.get("browser", True),
         respect_robots=f.get("respect_robots_txt", True),
+        max_retries=f.get("max_retries", 2),
+        backoff_seconds=f.get("retry_backoff_seconds", 15),
+        max_retry_wait=f.get("max_retry_wait_seconds", 120),
+        restricted_recheck_days=f.get("restricted_recheck_days", 7),
     )

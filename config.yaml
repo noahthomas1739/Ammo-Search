@@ -18,6 +18,10 @@ fetch:
   browser: true
   respect_robots_txt: true
   cache_hours: 5            # reuse a page loaded within this many hours instead of re-loading it
+  max_retries: 2            # temporary errors (timeout, 429, 5xx) are retried with backoff...
+  retry_backoff_seconds: 15 # ...15 s, then 45 s, or the site's Retry-After if it gives one
+  max_retry_wait_seconds: 120   # a longer Retry-After means: stop for this run, try next run
+  restricted_recheck_days: 7    # a 403 / CAPTCHA / robots.txt "no" is remembered this long, then re-checked
   min_delay_seconds: 8      # random pause between page loads on the same site
   max_delay_seconds: 20
 
@@ -90,9 +94,11 @@ default_shipping: {flat: 14.99, verified: false}
 # pages return products, and fix the ones that don't.
 retailers:
   - name: LuckyGunner
-    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
+    # 2026-11-15: listing pages refused automated requests (HTTP 403) from home. That answer is
+    # cached and re-checked weekly; the sitemap is tried first.
     aliases: [Lucky Gunner]
     domain: luckygunner.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     shipping: {flat: 14.99, verified: false}
     pages:
       9mm: [https://www.luckygunner.com/handgun/9mm-ammo]
@@ -100,9 +106,11 @@ retailers:
       762x54r: [https://www.luckygunner.com/rifle/7.62x54r-ammo]
 
   - name: Ammo.com
-    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
+    # 2026-11-15: listing pages refused automated requests (HTTP 403) from home. That answer is
+    # cached and re-checked weekly; the sitemap is tried first.
     aliases: [ammo.com]
     domain: ammo.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     shipping: {flat: 14.99, verified: false}
     pages:
       9mm: [https://ammo.com/handgun/9mm-ammo]
@@ -112,6 +120,7 @@ retailers:
   - name: Target Sports USA
     aliases: [TargetSportsUSA, Target Sports]
     domain: targetsportsusa.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     # Their shipping page says case-quantity ammo ships free via UPS Ground.
     shipping: {flat: 14.99, free_min_rounds: {9mm: 500, 12ga: 250, 762x54r: 440}, verified: false}
     pages:
@@ -127,6 +136,7 @@ retailers:
   - name: Bulk Ammo
     aliases: [BulkAmmo]
     domain: bulkammo.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     shipping: {flat: 14.99, verified: false}
     pages:
       9mm:
@@ -140,9 +150,10 @@ retailers:
       762x54r: [https://www.bulkammo.com/rifle/bulk-7.62x54r-ammo]
 
   - name: Rogers Sporting Goods
-    enabled: false   # search page loads products with JavaScript; no readable listings
+    # search page builds its results with JavaScript; now loaded in the headless browser
     aliases: [Rogers]
     domain: rogerssportinggoods.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     shipping: {flat: 14.99, verified: false}
     pages:
       9mm: ["https://www.rogerssportinggoods.com/search.php?search_query=9mm+fmj"]
@@ -150,8 +161,10 @@ retailers:
       762x54r: ["https://www.rogerssportinggoods.com/search.php?search_query=7.62x54r"]
 
   - name: Brownells
-    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
+    # 2026-11-15: listing pages refused automated requests (HTTP 403) from home. That answer is
+    # cached and re-checked weekly; the sitemap is tried first.
     domain: brownells.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     # One unconfirmed source: free over $199.
     shipping: {flat: 14.99, free_over: 199, verified: false}
     pages:
@@ -160,9 +173,11 @@ retailers:
       762x54r: ["https://www.brownells.com/search/?k=7.62x54r"]
 
   - name: Palmetto State Armory
-    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
+    # 2026-11-15: listing pages refused automated requests (HTTP 403) from home. That answer is
+    # cached and re-checked weekly; the sitemap is tried first.
     aliases: [PSA, Palmetto State]
     domain: palmettostatearmory.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     # Reports range from about $12 to $30 for ammo. Watch for their free-shipping promos.
     shipping: {flat: 19.99, verified: false}
     pages:
@@ -171,9 +186,11 @@ retailers:
       762x54r: [https://palmettostatearmory.com/7-62x54r-ammo.html]
 
   - name: MidwayUSA
-    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
+    # 2026-11-15: listing pages refused automated requests (HTTP 403) from home. That answer is
+    # cached and re-checked weekly; the sitemap is tried first.
     aliases: [Midway USA, Midway]
     domain: midwayusa.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     shipping: {flat: 14.99, verified: false}
     pages:
       9mm: ["https://www.midwayusa.com/s?searchTerm=9mm%20fmj"]
@@ -181,9 +198,11 @@ retailers:
       762x54r: ["https://www.midwayusa.com/s?searchTerm=7.62x54r"]
 
   - name: Sportsman's Guide
-    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
+    # 2026-11-15: listing pages refused automated requests (HTTP 403) from home. That answer is
+    # cached and re-checked weekly; the sitemap is tried first.
     aliases: [Sportsmans Guide, SportsmansGuide]
     domain: sportsmansguide.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     shipping: {flat: 14.99, verified: false}
     pages:
       9mm: ["https://www.sportsmansguide.com/searchresults?keyword=9mm%20fmj"]
@@ -191,9 +210,11 @@ retailers:
       762x54r: ["https://www.sportsmansguide.com/searchresults?keyword=7.62x54r"]
 
   - name: Simmons Sporting Goods
-    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
+    # 2026-11-15: listing pages refused automated requests (HTTP 403) from home. That answer is
+    # cached and re-checked weekly; the sitemap is tried first.
     aliases: [Simmons]
     domain: simmonssportinggoods.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     shipping: {flat: 14.99, verified: false}
     pages:
       9mm: ["https://www.simmonssportinggoods.com/search.php?search_query=9mm+fmj"]
@@ -201,9 +222,11 @@ retailers:
       762x54r: ["https://www.simmonssportinggoods.com/search.php?search_query=7.62x54r"]
 
   - name: Ammunition Depot
-    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
+    # 2026-11-15: listing pages refused automated requests (HTTP 403) from home. That answer is
+    # cached and re-checked weekly; the sitemap is tried first.
     aliases: [AmmunitionDepot, Ammo Depot]
     domain: ammunitiondepot.com
+    sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     shipping: {flat: 14.99, verified: false}
     pages:
       9mm: [https://www.ammunitiondepot.com/9mm-ammo]
@@ -214,9 +237,9 @@ retailers:
 # matched against the list above. Unknown stores get default_shipping.
 aggregators:
   - name: AmmoSeek
+    enabled: false   # refuses automated requests (403); no public API or feed
     base_url: https://ammoseek.com
     # No public API or feed. Its own price alerts (free account) email/text you: ammoseek.com
-    enabled: false   # refuses automated requests (HTTP 403). Use the site's own alerts instead.
     pages:
       9mm: [https://ammoseek.com/ammo/9mm-luger]
       12ga: [https://ammoseek.com/ammo/12-gauge]

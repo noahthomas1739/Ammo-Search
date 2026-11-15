@@ -12,6 +12,7 @@ import re
 from urllib.parse import urlparse
 
 from .fetch import Fetcher, FetchError
+from .sources import source_base
 from .sources.feeds import SLUG_PATTERNS, parse_sitemap
 
 CANDIDATES = ["/sitemap.xml", "/sitemap_index.xml", "/rss.xml", "/rss", "/feed", "/products.json"]
@@ -61,13 +62,7 @@ def run_discover(cfg: dict, f: Fetcher) -> str:
     suggestions = []
     sources = [*cfg.get("retailers", []), *cfg.get("aggregators", [])]
     for src in sources:
-        base = src.get("base_url")
-        for urls in (src.get("pages") or {}).values():  # use the host the configured pages use
-            if urls and not base:
-                p = urlparse(urls[0])
-                base = f"{p.scheme}://{p.netloc}"
-        if not base and src.get("domain"):
-            base = f"https://www.{src['domain']}"
+        base = source_base(src)
         if not base:
             continue
         lines.append(f"\n{src['name']}  ({base})")
@@ -77,25 +72,28 @@ def run_discover(cfg: dict, f: Fetcher) -> str:
             lines.append(f"  robots.txt: found, {len(sms)} sitemap(s) listed")
         except FetchError as e:
             robots, sms = "", []
-            lines.append(f"  robots.txt: not readable ({str(e).rsplit(': ', 1)[-1]})")
+            note = {"not_found": "none published (no rules)", "forbidden": "refused (treated as: no automated access)"}.get(e.kind, f"{e.category}: {e.kind}")
+            lines.append(f"  robots.txt: {note}")
         for cal, urls in (src.get("pages") or {}).items():
             for u in urls[:1]:
                 if robots and not f.allowed(u):
                     lines.append(f"  configured {cal} page is DISALLOWED by robots.txt")
-        found_any = False
+        found_any, absent, unknown = False, 0, []
         for url in list(dict.fromkeys(sms + [base + c for c in CANDIDATES])):
-            if robots and not f.allowed(url):
-                lines.append(f"  {url}: disallowed by robots.txt")
+            if not f.allowed(url):
+                unknown.append(f"{url.replace(base, '')} (robots.txt disallows)")
                 continue
             try:
                 body = f.get(url, "raw", 24 * 3600)
             except FetchError as e:
-                msg = str(e).rsplit(": ", 1)[-1]
-                if "404" not in msg:
-                    lines.append(f"  {url}: {msg}")
+                if e.kind == "not_found":
+                    absent += 1
+                else:
+                    unknown.append(f"{url.replace(base, '') or url} ({e.category}: {e.kind})")
                 continue
             kind = classify(body)
             if kind in ("html page", "other"):
+                absent += 1  # the URL serves an ordinary page, not a feed
                 continue
             found_any = True
             detail = ""
@@ -110,8 +108,15 @@ def run_discover(cfg: dict, f: Fetcher) -> str:
                 detail = f" - {len(body)} bytes"
                 suggestions.append(f"{src['name']}: JSON at {url} (send this to Claude)")
             lines.append(f"  FOUND {kind}: {url}{detail}")
+        if unknown:
+            # a failed check is not evidence that nothing exists
+            lines.append(f"  COULDN'T CHECK {len(unknown)} location(s): " + "; ".join(unknown[:4]))
         if not found_any:
-            lines.append("  no public feed, sitemap or JSON endpoint found")
+            lines.append(
+                "  nothing found at the standard locations that could be checked"
+                if not unknown else
+                "  result UNKNOWN for the locations above; a feed may still exist (check the site's footer/help pages)"
+            )
     if suggestions:
         lines += ["", "Suggested additions to config.yaml:", *[f"  - {s}" for s in suggestions]]
     text = "\n".join(lines)

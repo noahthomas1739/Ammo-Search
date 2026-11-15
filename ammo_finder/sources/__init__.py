@@ -44,6 +44,63 @@ def iter_pages(cfg: dict):
                 yield src["name"], cal, u, agg
 
 
+def source_base(src: dict) -> Optional[str]:
+    """https://host of a source: base_url, else the host its pages use, else its domain."""
+    if src.get("base_url"):
+        return src["base_url"].rstrip("/")
+    for urls in (src.get("pages") or {}).values():
+        if urls:
+            p = urlparse(urls[0])
+            return f"{p.scheme}://{p.netloc}"
+    return f"https://www.{src['domain']}" if src.get("domain") else None
+
+
+def _err_info(exc: Optional[Exception]) -> tuple[str, str, str]:
+    if exc is None:
+        return "", "ok", ""
+    if isinstance(exc, FetchError):
+        return exc.kind, exc.category, str(exc)
+    return "parse_error", "other", f"{type(exc).__name__}: {exc}"
+
+
+def coverage(cfg: dict, listings: list[Listing], report: dict) -> dict[str, dict]:
+    """Per retailer: did we reach it directly, through an alternative source
+    (an aggregator feed attributing listings to it), or not at all this run?
+    'not reached' is NOT the same as 'no deals': it means we couldn't look."""
+    out: dict[str, dict] = {}
+    via_alt: dict[str, dict[str, int]] = {}
+    agg_names = {a["name"] for a in cfg.get("aggregators", [])}
+    for l in listings:
+        src = report.get(l.source, {}).get("source")
+        if src in agg_names:
+            via_alt.setdefault(l.retailer, {}).setdefault(src, 0)
+            via_alt[l.retailer][src] += 1
+    for r in cfg.get("retailers", []):
+        mine = [v for v in report.values() if v["source"] == r["name"]]
+        direct = [v for v in mine if v["ok"] and v["count"] > 0]
+        alt = via_alt.get(r["name"], {})
+        cats = sorted({v["category"] for v in mine if not v["ok"]})
+        if direct:
+            status = "direct"
+        elif alt:
+            status = "alternative"
+        elif not mine:
+            status = "not configured" if r.get("enabled") is not False else "disabled"
+        elif "temporary" in cats:
+            status = "temporary failure"
+        elif "restricted" in cats:
+            status = "restricted"
+        else:
+            status = "no readable listings"
+        out[r["name"]] = {
+            "status": status,
+            "direct_routes": sorted({v["via"] for v in direct}),
+            "alternatives": alt,
+            "failures": sorted({f"{v['via']}: {v['error_kind']}" for v in mine if not v["ok"]}),
+        }
+    return out
+
+
 def _wrap(fetcher) -> Callable:
     """Accept a Fetcher, a get(url, kind, ttl) function, or a simple test stub fetcher(url)."""
     if hasattr(fetcher, "get") and hasattr(fetcher, "robots_txt"):
@@ -65,12 +122,16 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
     report: dict[str, dict] = {}
     cals = ("9mm", "12ga", "762x54r")
 
-    def record(key, name, cal, via, found, err=""):
+    def record(key, name, cal, via, found, exc: Optional[Exception] = None):
         for l in found:
             l.source = key  # lets `doctor` show samples per source
-        report[key] = {"source": name, "caliber": cal, "ok": not err, "count": len(found), "error": err[:200], "via": via}
-        if err:
-            log.warning("%-24s %-8s %-8s FAILED %s", name, cal, via, err)
+        kind, category, msg = _err_info(exc)
+        report[key] = {
+            "source": name, "caliber": cal, "via": via, "count": len(found), "ok": exc is None,
+            "error": msg[:200], "error_kind": kind, "category": category,
+        }
+        if exc is not None:
+            log.warning("%-24s %-8s %-8s %-10s %s", name, cal, via, category.upper(), msg)
         else:
             log.info("%-24s %-8s %-8s %3d listings  %s", name, cal, via, len(found), key)
 
@@ -86,7 +147,7 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
                 listings += found
                 record(url, name, "all", "feed", found)
             except Exception as e:
-                record(url, name, "all", "feed", [], str(e))
+                record(url, name, "all", "feed", [], e)
 
         # 2) sitemaps
         sm = src.get("sitemaps")
@@ -94,7 +155,7 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
             try:
                 sm_urls = _sitemap_roots(sm.get("urls", ["robots"]), src, fetch, fetcher)
             except Exception as e:
-                record(f"{name} sitemaps", name, "all", "sitemap", [], str(e))
+                record(f"{name} sitemaps", name, "all", "sitemap", [], e)
                 sm_urls = []
             for cal in cals:
                 if sm_urls:
@@ -108,7 +169,7 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
                     listings += found
                     record(url, name, cal, "page", found)
                 except Exception as e:
-                    record(url, name, cal, "page", [], str(e))
+                    record(url, name, cal, "page", [], e)
     return listings, report
 
 
@@ -118,7 +179,7 @@ def _sitemap_roots(urls: list[str], src: dict, fetch, fetcher) -> list[str]:
         if u != "robots":
             out.append(u)
             continue
-        base = "https://" + src["domain"] if src.get("domain") else None
+        base = source_base(src)
         if not base:
             continue
         txt = fetcher.robots_txt(base) if hasattr(fetcher, "robots_txt") else fetch(base + "/robots.txt", "raw", None)
@@ -133,7 +194,7 @@ def _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record):
     try:
         urls = sitemap_product_urls(fetch, sm_urls, cal, include)
     except Exception as e:
-        record(f"{name} {cal} sitemap", name, cal, "sitemap", [], str(e))
+        record(f"{name} {cal} sitemap", name, cal, "sitemap", [], e)
         return
     limit = sm.get("max_products", 15)  # new (uncached) product pages loaded per run
     loaded, found = 0, []
@@ -146,9 +207,9 @@ def _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record):
                 loaded += 1
             found += extract(html, url, name, cal, cfg["retailers"], cfg.get("marketplace_sellers", []))[:1]
         except FetchError as e:
-            if "blocked" in str(e) or "HTTP 403" in str(e):
-                record(f"{name} {cal} sitemap", name, cal, "sitemap", found, str(e))
+            if e.category == "restricted" or e.kind == "rate_limited":
                 listings += found
+                record(f"{name} {cal} sitemap", name, cal, "sitemap", found, e)
                 return
         except Exception:
             continue
