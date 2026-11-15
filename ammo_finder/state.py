@@ -109,21 +109,44 @@ class State:
 
     # ---------------------------------------------------- source health
     def record_health(self, any_success: bool, at: Optional[datetime] = None) -> None:
-        at = at or now()
+        """Counts consecutive runs that found no usable products. Counting runs
+        (not hours) means a laptop that was off for a week doesn't trigger a
+        false "no data" warning."""
         h = self.data["health"]
-        h.setdefault("first_run", _ts(at))
         if any_success:
-            h["last_any_success"] = _ts(at)
+            h["last_any_success"] = _ts(at or now())
+            h["fail_streak"] = 0
+        else:
+            h["fail_streak"] = h.get("fail_streak", 0) + 1
 
-    def needs_health_warning(self, alerts_cfg: dict, at: Optional[datetime] = None) -> Optional[float]:
+    def needs_health_warning(self, alerts_cfg: dict, at: Optional[datetime] = None) -> Optional[int]:
         at = at or now()
         h = self.data["health"]
-        since = _parse(h.get("last_any_success") or h.get("first_run") or _ts(at))
-        hours = (at - since).total_seconds() / 3600
-        if hours < alerts_cfg.get("health_warning_after_hours", 36):
+        streak = h.get("fail_streak", 0)
+        if streak < alerts_cfg.get("health_warning_after_runs", 4):
             return None
         last = h.get("last_warning")
         if last and at - _parse(last) < timedelta(days=alerts_cfg.get("health_warning_every_days", 3)):
             return None
         h["last_warning"] = _ts(at)
-        return hours
+        return streak
+
+    # ---------------------------------------------------- digest / monthly timing (used by `auto`)
+    def digest_due(self, at: Optional[datetime] = None) -> bool:
+        last = self.data.get("last_digest")
+        return not last or (at or now()) - _parse(last) >= timedelta(hours=20)
+
+    def mark_digest(self, at: Optional[datetime] = None) -> None:
+        self.data["last_digest"] = _ts(at or now())
+
+    def monthly_due(self, at: Optional[datetime] = None) -> bool:
+        """True on the first run in a new calendar month (once there is history to report)."""
+        month = (at or now()).strftime("%Y-%m")
+        last = self.data.get("last_monthly")
+        if last is None:
+            self.data["last_monthly"] = month  # first install: start counting from here
+            return False
+        return last != month
+
+    def mark_monthly(self, at: Optional[datetime] = None) -> None:
+        self.data["last_monthly"] = (at or now()).strftime("%Y-%m")

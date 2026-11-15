@@ -58,6 +58,22 @@ Also set `sales_tax_rate` to your exact local rate. The default is 8.25%.
 
 After that it runs on its own.
 
+## Running it on a Mac instead of GitHub
+
+Most stores refuse requests from GitHub's servers. From a home internet connection, more of them answer normally. On the Mac, the monitor runs when you log in, every 6 hours while the Mac is awake, and right after it wakes if a check was missed. The daily digest and monthly report go out on the first run after they're due. A week with the laptop closed is fine.
+
+1. Open **Terminal** and paste:
+   ```bash
+   git clone https://github.com/noahthomas1739/Ammo-Search.git ~/ammo-search && bash ~/ammo-search/mac/install.sh
+   ```
+   If macOS asks to install "command line developer tools", click Install, then paste the line again.
+2. Enter your Gmail address and App Password when asked. A test email is sent.
+3. Turn off the GitHub schedule so you don't get duplicate emails: **Actions → Ammo deal monitor → ⋯ → Disable workflow**.
+
+Change thresholds by editing `config.yaml` on GitHub. The Mac pulls the change before each run. To see what the monitor is doing, run `tail -f ~/Library/Application\ Support/AmmoFinder/monitor.log`. To remove it, run `bash ~/ammo-search/mac/uninstall.sh`.
+
+Stores that show a bot check ("Just a moment...") are reported as blocked and skipped, not worked around.
+
 ## Files
 
 - `config.yaml`: thresholds, retailers, shipping rules, and page URLs. Edit thresholds here when the monthly report suggests it.

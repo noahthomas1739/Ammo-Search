@@ -47,7 +47,7 @@ def run_probe(cfg: dict, out_dir: str = "debug", only: str | None = None) -> lis
         print("playwright not installed; skipping browser probe")
     else:
         with sync_playwright() as p:
-            browser = p.chromium.launch(args=["--disable-blink-features=AutomationControlled"])
+            browser = p.chromium.launch()
             ctx = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
                 viewport={"width": 1366, "height": 900},

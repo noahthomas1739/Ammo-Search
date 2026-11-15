@@ -18,7 +18,7 @@ alerts:
   realert_price_drop: 0.005   # re-text a deal already sent if it drops another 0.5¢/rd or more
   realert_after_days: 7       # ...or if it is still live this many days later
   digest_repeat_days: 3       # a GOOD deal reappears in the daily digest at most every N days
-  health_warning_after_hours: 36   # warn if every source has been failing this long
+  health_warning_after_runs: 4     # email a warning after this many runs in a row find no usable products
   health_warning_every_days: 3
 
 categories:
@@ -103,9 +103,9 @@ retailers:
     # Their shipping page says case-quantity ammo ships free via UPS Ground.
     shipping: {flat: 14.99, free_min_rounds: {9mm: 500, 12ga: 250, 762x54r: 440}, verified: false}
     pages:
-      9mm: ["https://www.targetsportsusa.com/search.aspx?searchterm=9mm+fmj"]
-      12ga: ["https://www.targetsportsusa.com/search.aspx?searchterm=12+gauge+1+1%2F4+oz"]
-      762x54r: ["https://www.targetsportsusa.com/search.aspx?searchterm=7.62x54r"]
+      9mm: ["https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx"]
+      762x54r: ["https://www.targetsportsusa.com/762x54r-ammo-c-103.aspx"]
+      # 12ga: category URL not found yet. Paste it here from the site.
 
   - name: Bulk Ammo
     aliases: [BulkAmmo]
@@ -121,9 +121,9 @@ retailers:
     domain: rogerssportinggoods.com
     shipping: {flat: 14.99, verified: false}
     pages:
-      9mm: ["https://www.rogerssportinggoods.com/catalogsearch/result/?q=9mm+fmj"]
-      12ga: ["https://www.rogerssportinggoods.com/catalogsearch/result/?q=12+gauge+1+1%2F4+oz"]
-      762x54r: ["https://www.rogerssportinggoods.com/catalogsearch/result/?q=7.62x54r"]
+      9mm: ["https://www.rogerssportinggoods.com/search.php?search_query=9mm+fmj"]
+      12ga: ["https://www.rogerssportinggoods.com/search.php?search_query=12+gauge+1+1%2F4+oz"]
+      762x54r: ["https://www.rogerssportinggoods.com/search.php?search_query=7.62x54r"]
 
   - name: Brownells
     domain: brownells.com
@@ -187,7 +187,7 @@ aggregators:
     pages:
       9mm: [https://ammoseek.com/ammo/9mm-luger]
       12ga: [https://ammoseek.com/ammo/12-gauge]
-      762x54r: [https://ammoseek.com/ammo/7.62x54mmr]
+      762x54r: [https://ammoseek.com/ammo/7.62x54r]
   - name: gun.deals
     pages:
       9mm: ["https://gun.deals/search?keys=9mm%20fmj"]

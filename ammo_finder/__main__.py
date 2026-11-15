@@ -3,6 +3,7 @@
   python -m ammo_finder check      # scrape, text GREAT/EXCEPTIONAL now, queue GOOD for digest
   python -m ammo_finder digest     # send the queued GOOD deals (only if any)
   python -m ammo_finder monthly    # last month vs the month before, with threshold suggestions
+  python -m ammo_finder auto       # check + digest/monthly if due (for a Mac that isn't always on)
   python -m ammo_finder doctor     # show how many products each configured page yields
   python -m ammo_finder test-alert # send a test message on every configured channel
 """
@@ -47,7 +48,9 @@ def run_check(cfg: dict, state: State, fetcher=None) -> dict:
 
     state.record_prices(obs)
     ok_pages = sum(1 for p in pages.values() if p["ok"] and p["count"] > 0)
-    state.record_health(ok_pages > 0)
+    # healthy = at least one real product of the right kind was read (any price).
+    # Pages full of menu items or junk don't count.
+    state.record_health(sum(len(v) for v in obs.values()) > 0)
 
     alerts_cfg = cfg["alerts"]
     urgent = [d for d in deals if d.tier in ("GREAT", "EXCEPTIONAL") and state.should_alert(d, alerts_cfg)]
@@ -62,13 +65,13 @@ def run_check(cfg: dict, state: State, fetcher=None) -> dict:
 
     queued = sum(1 for d in deals if d.tier == "GOOD" and state.queue_digest(d, alerts_cfg))
 
-    hours = state.needs_health_warning(alerts_cfg)
-    if hours:
+    streak = state.needs_health_warning(alerts_cfg)
+    if streak:
         failing = [f"{p['source']} {p['caliber']}: {p['error'] or 'no products found'}" for p in pages.values() if not (p["ok"] and p["count"])]
         notify.send(
             "Ammo monitor: no data",
-            f"No store page has returned products for {hours:.0f} hours, so deals may be missed.\n"
-            "Run the 'doctor' workflow to see which pages fail.\n\n" + "\n".join(failing[:15]),
+            f"The last {streak} checks found no usable products on any store page, so deals may be missed.\n"
+            "Run 'doctor' to see which pages fail.\n\n" + "\n".join(failing[:15]),
         )
 
     state.prune()
@@ -111,6 +114,39 @@ def run_digest(cfg: dict, state: State) -> int:
     return len(deals)
 
 
+def wait_for_network(timeout: int = 180) -> bool:
+    """Right after the Mac wakes, Wi-Fi can take a minute to reconnect."""
+    import socket
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            socket.create_connection(("ammoseek.com", 443), timeout=5).close()
+            return True
+        except OSError:
+            time.sleep(10)
+    return False
+
+
+def run_auto(cfg: dict, state: State) -> None:
+    """One command for computers that aren't always on: check now, then send the
+    daily digest and monthly report if they're due."""
+    if not wait_for_network():
+        log.warning("No internet connection; skipping this run.")
+        return
+    run_check(cfg, state)
+    state.save()
+    if state.digest_due():
+        run_digest(cfg, state)
+        state.mark_digest()
+        state.save()
+    if state.monthly_due():
+        title, body = monthly_report(state.data["history"], cfg, date.today())
+        notify.send(title, body)
+        state.mark_monthly()
+    state.save()
+
+
 def run_doctor(cfg: dict, only: str | None) -> None:
     listings, pages = collect(cfg, only=only)
     by_src = defaultdict(list)
@@ -126,9 +162,9 @@ def run_doctor(cfg: dict, only: str | None) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ammo_finder")
-    ap.add_argument("command", choices=["check", "digest", "monthly", "doctor", "test-alert", "probe"])
+    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "doctor", "test-alert", "probe"])
     ap.add_argument("--config", default="config.yaml")
-    ap.add_argument("--state", default="state/state.json")
+    ap.add_argument("--state", default=os.environ.get("AMMO_STATE") or "state/state.json")
     ap.add_argument("--only", help="doctor: only sources whose name contains this")
     ap.add_argument("--dry-run", action="store_true", help="print alerts instead of sending")
     args = ap.parse_args(argv)
@@ -141,6 +177,8 @@ def main(argv=None) -> int:
     if args.command == "check":
         run_check(cfg, state)
         state.save()
+    elif args.command == "auto":
+        run_auto(cfg, state)
     elif args.command == "digest":
         run_digest(cfg, state)
         state.save()
