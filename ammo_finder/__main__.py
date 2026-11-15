@@ -126,7 +126,7 @@ def run_doctor(cfg: dict, only: str | None) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ammo_finder")
-    ap.add_argument("command", choices=["check", "digest", "monthly", "doctor", "test-alert"])
+    ap.add_argument("command", choices=["check", "digest", "monthly", "doctor", "test-alert", "probe"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--state", default="state/state.json")
     ap.add_argument("--only", help="doctor: only sources whose name contains this")
@@ -149,6 +149,9 @@ def main(argv=None) -> int:
         notify.send(title, body)
     elif args.command == "doctor":
         run_doctor(cfg, args.only)
+    elif args.command == "probe":
+        from .probe import run_probe
+        run_probe(cfg, only=args.only)
     elif args.command == "test-alert":
         if not notify.channels() and not os.environ.get("DRY_RUN"):
             have = [k for k in ("SMTP_USER", "SMTP_PASSWORD", "SMTP_HOST", "ALERT_EMAIL", "NTFY_TOPIC", "TWILIO_ACCOUNT_SID") if os.environ.get(k)]
