@@ -45,7 +45,8 @@ git pull --ff-only -q 2>/dev/null || echo "(git pull skipped)"
 "$SUPPORT/venv/bin/python" -m pip install -q -r requirements.txt >/dev/null 2>&1 || true
 set -a; . "$ENV_FILE"; set +a
 export AMMO_STATE="$SUPPORT/state.json"
-exec "$SUPPORT/venv/bin/python" -m ammo_finder "\${1:-auto}"
+[ \$# -eq 0 ] && set -- auto
+exec "$SUPPORT/venv/bin/python" -m ammo_finder "\$@"
 EOF
 chmod 700 "$SUPPORT/run.sh"
 

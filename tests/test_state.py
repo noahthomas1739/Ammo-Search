@@ -43,7 +43,7 @@ def test_digest_queue(cfg, tmp_path):
 def test_run_check_end_to_end(cfg, tmp_path, monkeypatch):
     monkeypatch.setenv("DRY_RUN", "1")
     cfg = dict(cfg)
-    cfg["retailers"] = [dict(r, pages={}) for r in cfg["retailers"]]
+    cfg["retailers"] = [dict(r, pages={}, enabled=True) for r in cfg["retailers"]]
     cfg["retailers"][0]["pages"] = {"9mm": ["https://www.luckygunner.com/handgun/9mm-ammo"]}
     cfg["aggregators"] = [{"name": "AmmoSeek", "pages": {"762x54r": ["https://ammoseek.com/ammo/7.62x54mmr"]}}]
     pages = {"https://www.luckygunner.com/handgun/9mm-ammo": fixture("retailer_cards.html"),

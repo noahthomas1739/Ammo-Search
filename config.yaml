@@ -80,6 +80,7 @@ default_shipping: {flat: 14.99, verified: false}
 # pages return products, and fix the ones that don't.
 retailers:
   - name: LuckyGunner
+    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
     aliases: [Lucky Gunner]
     domain: luckygunner.com
     shipping: {flat: 14.99, verified: false}
@@ -89,6 +90,7 @@ retailers:
       762x54r: [https://www.luckygunner.com/rifle/7.62x54r-ammo]
 
   - name: Ammo.com
+    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
     aliases: [ammo.com]
     domain: ammo.com
     shipping: {flat: 14.99, verified: false}
@@ -103,7 +105,10 @@ retailers:
     # Their shipping page says case-quantity ammo ships free via UPS Ground.
     shipping: {flat: 14.99, free_min_rounds: {9mm: 500, 12ga: 250, 762x54r: 440}, verified: false}
     pages:
-      9mm: ["https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx"]
+      9mm:
+        - https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx
+        - https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx?pagenum=2
+        - https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx?pagenum=3
       762x54r: ["https://www.targetsportsusa.com/762x54r-ammo-c-103.aspx"]
       # 12ga: category URL not found yet. Paste it here from the site.
 
@@ -112,11 +117,18 @@ retailers:
     domain: bulkammo.com
     shipping: {flat: 14.99, verified: false}
     pages:
-      9mm: [https://www.bulkammo.com/handgun/bulk-9mm-ammo]
-      12ga: [https://www.bulkammo.com/shotgun/bulk-12-gauge-ammo]
+      9mm:
+        - https://www.bulkammo.com/handgun/bulk-9mm-ammo
+        - https://www.bulkammo.com/handgun/bulk-9mm-ammo?p=2
+      12ga:
+        - https://www.bulkammo.com/shotgun/bulk-12ga-ammo
+        - https://www.bulkammo.com/shotgun/bulk-12ga-ammo?p=2
+        - https://www.bulkammo.com/shotgun/bulk-12ga-ammo?p=3
+        - https://www.bulkammo.com/shotgun/bulk-12ga-ammo?p=4
       762x54r: [https://www.bulkammo.com/rifle/bulk-7.62x54r-ammo]
 
   - name: Rogers Sporting Goods
+    enabled: false   # search page loads products with JavaScript; no readable listings
     aliases: [Rogers]
     domain: rogerssportinggoods.com
     shipping: {flat: 14.99, verified: false}
@@ -126,6 +138,7 @@ retailers:
       762x54r: ["https://www.rogerssportinggoods.com/search.php?search_query=7.62x54r"]
 
   - name: Brownells
+    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
     domain: brownells.com
     # One unconfirmed source: free over $199.
     shipping: {flat: 14.99, free_over: 199, verified: false}
@@ -135,6 +148,7 @@ retailers:
       762x54r: ["https://www.brownells.com/search/?k=7.62x54r"]
 
   - name: Palmetto State Armory
+    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
     aliases: [PSA, Palmetto State]
     domain: palmettostatearmory.com
     # Reports range from about $12 to $30 for ammo. Watch for their free-shipping promos.
@@ -145,6 +159,7 @@ retailers:
       762x54r: [https://palmettostatearmory.com/7-62x54r-ammo.html]
 
   - name: MidwayUSA
+    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
     aliases: [Midway USA, Midway]
     domain: midwayusa.com
     shipping: {flat: 14.99, verified: false}
@@ -154,6 +169,7 @@ retailers:
       762x54r: ["https://www.midwayusa.com/s?searchTerm=7.62x54r"]
 
   - name: Sportsman's Guide
+    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
     aliases: [Sportsmans Guide, SportsmansGuide]
     domain: sportsmansguide.com
     shipping: {flat: 14.99, verified: false}
@@ -163,6 +179,7 @@ retailers:
       762x54r: ["https://www.sportsmansguide.com/searchresults?keyword=7.62x54r"]
 
   - name: Simmons Sporting Goods
+    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
     aliases: [Simmons]
     domain: simmonssportinggoods.com
     shipping: {flat: 14.99, verified: false}
@@ -172,6 +189,7 @@ retailers:
       762x54r: ["https://www.simmonssportinggoods.com/search.php?search_query=7.62x54r"]
 
   - name: Ammunition Depot
+    enabled: false   # refuses automated requests (HTTP 403), even from home. Kept for name matching.
     aliases: [AmmunitionDepot, Ammo Depot]
     domain: ammunitiondepot.com
     shipping: {flat: 14.99, verified: false}
@@ -184,11 +202,13 @@ retailers:
 # matched against the list above. Unknown stores get default_shipping.
 aggregators:
   - name: AmmoSeek
+    enabled: false   # refuses automated requests (HTTP 403). Use the site's own alerts instead.
     pages:
       9mm: [https://ammoseek.com/ammo/9mm-luger]
       12ga: [https://ammoseek.com/ammo/12-gauge]
       762x54r: [https://ammoseek.com/ammo/7.62x54r]
   - name: gun.deals
+    enabled: false   # refuses automated requests (HTTP 403). Use the site's own alerts instead.
     pages:
       9mm: ["https://gun.deals/search?keys=9mm%20fmj"]
       12ga: ["https://gun.deals/search?keys=12%20gauge%201%201%2F4%20oz"]

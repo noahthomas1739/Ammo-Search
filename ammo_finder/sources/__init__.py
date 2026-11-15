@@ -13,10 +13,14 @@ log = logging.getLogger(__name__)
 
 def iter_pages(cfg: dict):
     for r in cfg.get("retailers", []):
+        if r.get("enabled") is False:
+            continue
         for cal, urls in (r.get("pages") or {}).items():
             for u in urls:
                 yield r["name"], cal, u, False
     for a in cfg.get("aggregators", []):
+        if a.get("enabled") is False:
+            continue
         for cal, urls in (a.get("pages") or {}).items():
             for u in urls:
                 yield a["name"], cal, u, True
