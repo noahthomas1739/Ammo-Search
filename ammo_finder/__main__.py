@@ -5,6 +5,7 @@
   python -m ammo_finder monthly    # last month vs the month before, with threshold suggestions
   python -m ammo_finder auto       # check + digest/monthly if due (for a Mac that isn't always on)
   python -m ammo_finder doctor     # show how many products each configured page yields
+  python -m ammo_finder discover   # look for public feeds / sitemaps / JSON on each site
   python -m ammo_finder test-alert # send a test message on every configured channel
 """
 from __future__ import annotations
@@ -15,6 +16,7 @@ import os
 import sys
 from collections import defaultdict
 from datetime import date
+from typing import Optional
 
 import yaml
 
@@ -22,6 +24,7 @@ from . import notify
 from .models import TIER_ORDER, Deal
 from .report import format_alert, format_digest, monthly_report, cents
 from .rules import evaluate
+from .fetch import from_config
 from .sources import collect
 from .state import State
 
@@ -34,8 +37,8 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def run_check(cfg: dict, state: State, fetcher=None) -> dict:
-    listings, pages = collect(cfg, **({"fetcher": fetcher} if fetcher else {}))
+def run_check(cfg: dict, state: State, fetcher) -> dict:
+    listings, pages = collect(cfg, fetcher)
     obs: dict[str, list[float]] = defaultdict(list)
     best: dict[str, Deal] = {}
     for l in listings:
@@ -128,13 +131,13 @@ def wait_for_network(timeout: int = 180) -> bool:
     return False
 
 
-def run_auto(cfg: dict, state: State) -> None:
+def run_auto(cfg: dict, state: State, fetcher) -> None:
     """One command for computers that aren't always on: check now, then send the
     daily digest and monthly report if they're due."""
     if not wait_for_network():
         log.warning("No internet connection; skipping this run.")
         return
-    run_check(cfg, state)
+    run_check(cfg, state, fetcher)
     state.save()
     if state.digest_due():
         run_digest(cfg, state)
@@ -147,14 +150,14 @@ def run_auto(cfg: dict, state: State) -> None:
     state.save()
 
 
-def run_doctor(cfg: dict, only: str | None) -> None:
-    listings, pages = collect(cfg, only=only)
+def run_doctor(cfg: dict, fetcher, only: Optional[str]) -> None:
+    listings, pages = collect(cfg, fetcher, only=only)
     by_src = defaultdict(list)
     for l in listings:
         by_src[l.source].append(l)
     for url, p in pages.items():
         status = f"{p['count']:3d} products" if p["ok"] else f"FAILED: {p['error']}"
-        print(f"{p['source']:<24} {p['caliber']:<8} {status}\n    {url}")
+        print(f"{p['source']:<24} {p['caliber']:<8} {p.get('via', ''):<8} {status}\n    {url}")
         for l in by_src.get(url, [])[:3]:
             print(f"      - ${l.price:.2f} | {l.rounds or '?'} rds | {'in stock' if l.in_stock else 'OOS'} | {l.retailer} | {l.title[:70]}")
     _step_summary({"doctor": True, "pages_ok": sum(1 for p in pages.values() if p["count"])}, pages, [])
@@ -162,7 +165,7 @@ def run_doctor(cfg: dict, only: str | None) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ammo_finder")
-    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "doctor", "test-alert", "probe"])
+    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "doctor", "discover", "test-alert"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--state", default=os.environ.get("AMMO_STATE") or "state/state.json")
     ap.add_argument("--only", help="doctor: only sources whose name contains this")
@@ -174,11 +177,20 @@ def main(argv=None) -> int:
 
     cfg = load_config(args.config)
     state = State(args.state)
+    fetcher = from_config(cfg, os.path.join(os.path.dirname(os.path.abspath(args.state)), "cache"))
+    try:
+        return _dispatch(args, cfg, state, fetcher)
+    finally:
+        fetcher.close()
+        fetcher.prune_cache()
+
+
+def _dispatch(args, cfg: dict, state: State, fetcher) -> int:
     if args.command == "check":
-        run_check(cfg, state)
+        run_check(cfg, state, fetcher)
         state.save()
     elif args.command == "auto":
-        run_auto(cfg, state)
+        run_auto(cfg, state, fetcher)
     elif args.command == "digest":
         run_digest(cfg, state)
         state.save()
@@ -186,10 +198,10 @@ def main(argv=None) -> int:
         title, body = monthly_report(state.data["history"], cfg, date.today())
         notify.send(title, body)
     elif args.command == "doctor":
-        run_doctor(cfg, args.only)
-    elif args.command == "probe":
-        from .probe import run_probe
-        run_probe(cfg, only=args.only)
+        run_doctor(cfg, fetcher, args.only)
+    elif args.command == "discover":
+        from .discover import run_discover
+        run_discover(cfg, fetcher)
     elif args.command == "test-alert":
         if not notify.channels() and not os.environ.get("DRY_RUN"):
             have = [k for k in ("SMTP_USER", "SMTP_PASSWORD", "SMTP_HOST", "ALERT_EMAIL", "NTFY_TOPIC", "TWILIO_ACCOUNT_SID") if os.environ.get(k)]

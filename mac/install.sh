@@ -24,6 +24,8 @@ echo "==> Setting up Python packages (one minute)"
 python3 -m venv "$SUPPORT/venv"
 "$SUPPORT/venv/bin/python" -m pip install -q --upgrade pip
 "$SUPPORT/venv/bin/python" -m pip install -q -r "$DIR/requirements.txt"
+echo "==> Installing the headless browser (about 150 MB, one time)"
+"$SUPPORT/venv/bin/python" -m playwright install chromium
 
 if [ ! -f "$ENV_FILE" ]; then
   echo

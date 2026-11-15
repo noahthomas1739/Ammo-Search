@@ -72,7 +72,26 @@ Most stores refuse requests from GitHub's servers. From a home internet connecti
 
 Change thresholds by editing `config.yaml` on GitHub. The Mac pulls the change before each run. To see what the monitor is doing, run `tail -f ~/Library/Application\ Support/AmmoFinder/monitor.log`. To remove it, run `bash ~/ammo-search/mac/uninstall.sh`.
 
-Stores that show a bot check ("Just a moment...") are reported as blocked and skipped, not worked around.
+### How pages are read
+
+In order of preference, for each store in `config.yaml`:
+
+1. **`feeds:`** RSS/Atom deal feeds, read directly.
+2. **`sitemaps:`** the store's XML sitemap. Product URLs matching your calibers are picked out, and only those product pages are loaded (at most `max_products` new ones per run).
+3. **`pages:`** category or search pages, loaded in a standard headless Chromium so pages that build their product list with JavaScript still work.
+
+Every page load follows the same rules:
+
+- **robots.txt:** each site's rules about what automated tools may load are obeyed.
+- **Pacing:** loads on the same site are 8–20 seconds apart, at random.
+- **Cache:** everything is cached for 5 hours, so re-running `doctor` or `check` doesn't hit the stores again.
+- **Refusals:** a site that answers with a 403 or a bot check ("Just a moment...") is skipped for the rest of the run. It is never retried or worked around.
+
+To see which sites publish feeds, sitemaps or JSON, run:
+
+```bash
+"$HOME/Library/Application Support/AmmoFinder/venv/bin/python" -m ammo_finder discover
+```
 
 ## Files
 
