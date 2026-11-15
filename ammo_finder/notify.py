@@ -79,16 +79,28 @@ def _email(title: str, body: str) -> None:
     msg["To"] = os.environ.get("ALERT_EMAIL") or os.environ["SMTP_USER"]
     msg.set_content(body)
     host = os.environ.get("SMTP_HOST") or "smtp.gmail.com"
-    port = int(os.environ.get("SMTP_PORT") or "587")
-    if port == 465:
-        s = smtplib.SMTP_SSL(host, port, timeout=30)
-    else:
-        s = smtplib.SMTP(host, port, timeout=30)
-        s.starttls()
-    with s:
-        if os.environ.get("SMTP_USER"):
-            s.login(os.environ["SMTP_USER"], os.environ.get("SMTP_PASSWORD", ""))
-        s.send_message(msg)
+    ports = [int(os.environ["SMTP_PORT"])] if os.environ.get("SMTP_PORT") else [587, 465]
+    errors = []
+    for port in ports:  # 587 (STARTTLS) first, then 465 (SSL)
+        try:
+            if port == 465:
+                s = smtplib.SMTP_SSL(host, port, timeout=30)
+            else:
+                s = smtplib.SMTP(host, port, timeout=30)
+                s.starttls()
+            with s:
+                if os.environ.get("SMTP_USER"):
+                    s.login(os.environ["SMTP_USER"], os.environ.get("SMTP_PASSWORD", ""))
+                s.send_message(msg)
+            return
+        except smtplib.SMTPAuthenticationError as e:
+            raise RuntimeError(
+                "Gmail rejected the login. Check the address is spelled right and use a current "
+                f"16-letter App Password (not your normal password). Details: {e.smtp_code} {e.smtp_error!r}"
+            ) from e
+        except Exception as e:
+            errors.append(f"port {port}: {type(e).__name__}: {e}")
+    raise RuntimeError("Could not reach the mail server. " + " | ".join(errors))
 
 
 def send(title: str, body: str, urgent: bool = False) -> list[str]:
