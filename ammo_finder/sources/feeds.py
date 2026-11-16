@@ -17,7 +17,7 @@ from .extract import _OOS, _match_marketplace, _match_retailer, _prices_in
 
 # URL-slug patterns used to pick product pages out of a sitemap
 SLUG_PATTERNS = {
-    "9mm": r"9mm|9-mm|9x19",
+    "9mm": r"(?<![\dx.])9-?mm|9x19",
     "12ga": r"12-?ga|12-gauge|12gauge",
     "762x54r": r"7-?62-?x-?54|762x54",
 }

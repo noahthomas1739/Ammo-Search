@@ -112,7 +112,7 @@ def _walk(obj) -> Iterable[dict]:
             yield from _walk(v)
 
 
-def from_jsonld(soup: BeautifulSoup, base_url: str, retailer: str, caliber: Optional[str]) -> list[Listing]:
+def from_jsonld(soup: BeautifulSoup, base_url: str, retailer: str, caliber: Optional[str], aggregator: bool = False) -> list[Listing]:
     out = []
     for s in soup.find_all("script", type=re.compile("ld\\+json", re.I)):
         try:
@@ -144,7 +144,7 @@ def from_jsonld(soup: BeautifulSoup, base_url: str, retailer: str, caliber: Opti
                 out.append(
                     Listing(
                         title=name,
-                        retailer=seller_name or retailer,
+                        retailer=(seller_name or retailer) if aggregator else retailer,
                         url=url,
                         price=price,
                         rounds=detect_rounds(name) or detect_rounds(normalize(str(node.get("description", "")))),
@@ -335,7 +335,7 @@ def from_cards(soup: BeautifulSoup, base_url: str, retailer: str, caliber: Optio
 def extract(html: str, base_url: str, retailer: str, caliber: Optional[str], retailers: list[dict], markets: list[str], aggregator: bool = False) -> list[Listing]:
     soup = BeautifulSoup(html, "lxml")
     results: list[Listing] = []
-    results += from_jsonld(soup, base_url, retailer, caliber)
+    results += from_jsonld(soup, base_url, retailer, caliber, aggregator)
     results += from_tables(soup, base_url, retailer, caliber, retailers, markets)
     results += from_cards(soup, base_url, retailer, caliber, retailers, markets, aggregator)
     # de-duplicate: prefer the first (structured) occurrence of each URL

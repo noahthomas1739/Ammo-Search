@@ -23,8 +23,8 @@ log = logging.getLogger(__name__)
 
 # Narrow sitemap URLs to likely matches before loading any product pages
 DEFAULT_SITEMAP_INCLUDE = {
-    "9mm": r"(9mm|9-mm|9x19).*(fmj|115|124|ball|range|target)|(fmj|115|124).*(9mm|9-mm|9x19)",
-    "12ga": r"12-?ga|12-gauge.*(1-1-4|1-1-8|1-25|1-125|oz|heavy|high-velocity|field|dove|game)",
+    "9mm": r"((?<![\dx.])9-?mm|9x19).*(fmj|115|124|ball|range|target)|(fmj|115|124).*((?<![\dx.])9-?mm|9x19)",
+    "12ga": r"(12-?ga|12-gauge).*(1-1-4|1-1-8|1-25|1-125|oz|ounce|heavy|high-velocity|field|dove|game)",
     "762x54r": r"7-?62-?x-?54|762x54",
 }
 
@@ -173,19 +173,8 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
             except Exception as e:
                 record(url, name, "all", "feed", [], e)
 
-        # 2) sitemaps
-        sm = src.get("sitemaps")
-        if sm:
-            try:
-                sm_urls = _sitemap_roots(sm.get("urls", ["robots"]), src, fetch, fetcher)
-            except Exception as e:
-                record(f"{name} sitemaps", name, "all", "sitemap", [], e)
-                sm_urls = []
-            for cal in cals:
-                if sm_urls and cal not in done:
-                    _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record)
-
-        # 3) listing pages (fallback for calibers no structured source covered)
+        # 2) listing pages. A category page shows many products in one load,
+        # so it's lighter on the store than the sitemap route below.
         for cal, urls in (src.get("pages") or {}).items():
             if cal in done:
                 continue
@@ -194,8 +183,23 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
                     found = extract(fetch(url, "html", None), url, name, cal, retailers, markets, aggregator=agg)
                     listings += found
                     record(url, name, cal, "page", found)
+                    if found:
+                        done.add(cal)
                 except Exception as e:
                     record(url, name, cal, "page", [], e)
+
+        # 3) sitemap -> product pages, for calibers nothing above covered
+        sm = src.get("sitemaps")
+        todo = [c for c in cals if c not in done]
+        if sm and todo:
+            try:
+                sm_urls = _sitemap_roots(sm.get("urls", ["robots"]), src, fetch, fetcher)
+            except Exception as e:
+                record(f"{name} sitemaps", name, "all", "sitemap", [], e)
+                sm_urls = []
+            for cal in todo:
+                if sm_urls:
+                    _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record)
     _fill_round_counts(cfg, listings, fetch, fetcher, report)
     return listings, report
 

@@ -256,7 +256,7 @@ class Fetcher:
         try:
             resp = self._page.goto(url, wait_until="domcontentloaded", timeout=45000)
             try:
-                self._page.wait_for_load_state("networkidle", timeout=10000)
+                self._page.wait_for_load_state("networkidle", timeout=6000)
             except Exception:
                 pass  # some pages never go fully idle; what has loaded is enough
             status = resp.status if resp else 0

@@ -175,8 +175,15 @@ def run_doctor(cfg: dict, fetcher, only: Optional[str]) -> None:
             print(f"      NOTE: same products as {seen_sets[sig]} (this page number seems to be ignored)")
         elif sig:
             seen_sets[sig] = url
+    deals = [d for l in listings for d in [evaluate(l, cfg)[1]] if d]
+    if deals:
+        print("\nDeals found:")
+        for d in sorted(deals, key=lambda d: d.cpr):
+            print(f"  {d.tier:<11} {d.cpr * 100:.1f}¢/rd  ${d.total:.2f} for {d.total_rounds} | {d.listing.retailer} | {d.listing.title[:70]}\n      {d.listing.url}")
     print("\nCoverage this run (a store that couldn't be reached is NOT evidence of no deals):")
     for name, c in coverage(cfg, listings, pages).items():
+        if only and only.lower() not in name.lower():
+            continue
         extra = ""
         if c["direct_routes"]:
             extra = "via " + ", ".join(c["direct_routes"])
@@ -238,10 +245,13 @@ def main(argv=None) -> int:
     state = State(args.state)
     fetcher = from_config(cfg, os.path.join(os.path.dirname(os.path.abspath(args.state)), "cache"))
     try:
-        return _dispatch(args, cfg, state, fetcher)
-    finally:
-        fetcher.close()
-        fetcher.prune_cache()
+        rc = _dispatch(args, cfg, state, fetcher)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        os._exit(130)  # skip browser shutdown, which would print noise after Ctrl+C
+    fetcher.close()
+    fetcher.prune_cache()
+    return rc
 
 
 def _dispatch(args, cfg: dict, state: State, fetcher) -> int:
