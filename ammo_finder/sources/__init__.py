@@ -193,7 +193,7 @@ def rounds_from_product_page(html: str) -> Optional[int]:
     for l in from_jsonld(soup, "https://x", "x", None)[:1]:
         if l.rounds:
             return l.rounds
-    for el in soup.find_all(["tr", "td", "th", "li", "dt", "dd", "div", "span", "p"]):
+    for el in soup.find_all(["tr", "td", "th", "li", "dl", "dt", "dd", "div", "span", "p"]):
         t = normalize(el.get_text(" ", strip=True))
         if len(t) > 80:
             continue
