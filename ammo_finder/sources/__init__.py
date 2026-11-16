@@ -8,7 +8,9 @@ Per source (retailer or aggregator) in config.yaml, in order of preference:
 from __future__ import annotations
 
 import inspect
+import json
 import logging
+import os
 import re
 from typing import Callable, Optional
 from urllib.parse import urlparse
@@ -296,10 +298,16 @@ def _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record):
         record(f"{name} {cal} sitemap", name, cal, "sitemap", [], e)
         return
     limit = sm.get("max_products", 15)  # new (uncached) product pages loaded per run
-    loaded, found = 0, []
-    for url in urls:
+    # Work through the list in turn: each run starts where the last one stopped,
+    # so every matching product gets checked over a few days.
+    cursor_key, cursors = f"{name}|{cal}", _load_cursors(fetcher)
+    start = cursors.get(cursor_key, 0) % len(urls) if urls else 0
+    ordered = urls[start:] + urls[:start]
+    loaded, found, processed = 0, [], 0
+    for url in ordered:
         if loaded >= limit:
             break
+        processed += 1
         try:
             html = fetch(url, "html", None)
             if not getattr(fetcher, "last_from_cache", False):
@@ -312,5 +320,29 @@ def _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record):
                 return
         except Exception:
             continue
+    if urls:
+        cursors[cursor_key] = (start + processed) % len(urls)
+        _save_cursors(fetcher, cursors)
     listings += found
     record(f"{name} {cal} sitemap ({len(urls)} matching URLs)", name, cal, "sitemap", found)
+
+
+def _cursor_path(fetcher) -> Optional[str]:
+    d = getattr(fetcher, "cache_dir", None)
+    return os.path.join(d, "sitemap_cursors.json") if d else None
+
+
+def _load_cursors(fetcher) -> dict:
+    p = _cursor_path(fetcher)
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except (TypeError, OSError, ValueError):
+        return {}
+
+
+def _save_cursors(fetcher, cursors: dict) -> None:
+    p = _cursor_path(fetcher)
+    if p:
+        with open(p, "w") as f:
+            json.dump(cursors, f)

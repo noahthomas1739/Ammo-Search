@@ -253,3 +253,22 @@ def test_bulkammo_style_cards(cfg):
     ls = extract(html, "https://www.bulkammo.com/shotgun/bulk-12ga-ammo", "Bulk Ammo", "12ga", cfg["retailers"], [])
     got = sorted((l.price, l.rounds, l.stock_qty) for l in ls)
     assert got == [(90.0, 250, 102), (259.0, 1000, 5)]
+
+
+def test_sitemap_rotation(cfg, tmp_path):
+    from ammo_finder.sources import _from_sitemap
+    urls = [f"https://www.rogerssportinggoods.com/7-62x54r-fmj-{i}" for i in range(5)]
+    sm_xml = "<urlset>" + "".join(f"<url><loc>{u}</loc></url>" for u in urls) + "</urlset>"
+    class Fx:
+        cache_dir = str(tmp_path)
+        last_from_cache = False
+    seen = []
+    def fetch(url, kind="html", ttl=None):
+        if url.endswith("sitemap.xml"):
+            return sm_xml
+        seen.append(url)
+        return "<html></html>"
+    src = {"name": "Rogers Sporting Goods"}
+    for _ in range(3):
+        _from_sitemap(cfg, src, "762x54r", ["https://x/sitemap.xml"], {"max_products": 2}, fetch, Fx(), [], lambda *a, **k: None)
+    assert seen == urls[:5] + urls[:1]  # 0,1 then 2,3 then 4,0
