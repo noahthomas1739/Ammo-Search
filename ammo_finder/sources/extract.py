@@ -25,12 +25,12 @@ _OOS = re.compile(
     r"email when available|special order",
     re.I,
 )
-_QTY = re.compile(r"(?:only\s+)?(\d{1,5})\s+(?:in stock|available|left|units? available|remaining)", re.I)
+_QTY = re.compile(r"(?:only\s+)?(\d{1,5})\s+(?:in stock|available|left|units? available|remaining|ready to ship)", re.I)
 _BAD_PRICE_CLASS = re.compile(
     r"(?<![a-z])(old|was|regular|msrp|strike|compare|save|saving|cpr|unit|retail)|per-?(round|rd)|list-?price", re.I
 )
 _CARD_SELECTORS = [
-    "li.product-item", "div.product-item", ".product-item-info", "li.item.product", ".product-card",
+    "li.product-item", "div.product-item", "li.item", ".products-grid > li", ".product-item-info", "li.item.product", ".product-card",
     "[class*=product-card]", "[class*=productCard]", "[class*=ProductCard]", "[class*=product-tile]",
     "[class*=productTile]", "[class*=product-grid-item]", ".product", "article", "[data-product-id]",
     "[data-sku]", "[class*=deal-item]", "[class*=listing]", "[class*=result-item]", "[class*=search-result]",

@@ -204,3 +204,52 @@ def test_round_count_from_product_page(cfg):
     blazer = [l for l in ls if "blazer" in l.url][0]
     assert blazer.rounds == 50
     assert "https://www.targetsportsusa.com/hst-p-2.aspx" not in asked  # JHP: not worth a lookup
+
+
+SHOPIFY = """{"products": [
+ {"title": "Winchester Target & Practice 9mm Ammo 124 Grain Full Metal Jacket - USA9MM", "handle": "win-usa9mm",
+  "body_html": "<p>Brass case</p>",
+  "variants": [{"id": 1, "title": "Box of 50", "price": "14.25", "available": false},
+               {"id": 2, "title": "Case of 500 (10 Boxes)", "price": "142.50", "available": true}]},
+ {"title": "Federal HST 9mm 124gr JHP - 50 Rounds", "handle": "hst", "variants": [{"id": 3, "title": "Default Title", "price": "30.00", "available": true}]}
+]}"""
+
+
+def test_shopify_json(cfg):
+    from ammo_finder.sources.shopify import parse_products_json
+    ls = parse_products_json(SHOPIFY, "https://www.targetsportsusa.com", "Target Sports USA", "9mm")
+    assert [(l.rounds, l.price, l.in_stock) for l in ls] == [(50, 14.25, False), (500, 142.5, True), (50, 30.0, True)]
+    assert ls[1].url == "https://www.targetsportsusa.com/products/win-usa9mm?variant=2"
+    assert ls[2].title.endswith("50 Rounds")  # "Default Title" dropped
+
+
+def test_collect_prefers_json_over_pages(cfg):
+    cfg = dict(cfg)
+    cfg["aggregators"] = []
+    cfg["retailers"] = [dict(r, enabled=(r["name"] == "Target Sports USA"), sitemaps=None) for r in cfg["retailers"]]
+    asked = []
+    def fetch(url, kind="html", ttl=None):
+        asked.append(url)
+        if "9mm-luger-ammo-c-51/products.json" in url:
+            return SHOPIFY
+        raise F._status_error(url, 404)
+    ls, report = collect(cfg, fetch)
+    assert not any(u.endswith(".aspx") and "9mm" in u for u in asked)  # 9mm page skipped: JSON covered it
+    assert any("12-gauge-shotgun-ammo-c-747" in u and "products.json" not in u for u in asked)  # 12ga fell back to page
+    from ammo_finder.rules import evaluate
+    m, d = evaluate([l for l in ls if l.rounds == 500][0], cfg)
+    assert m is not None and d is None  # right product; 142.50 shipped+taxed = 30.9¢, above GOOD
+
+
+def test_bulkammo_style_cards(cfg):
+    from ammo_finder.sources.extract import extract
+    html = """<ul class="products-grid">
+     <li class="item first"><a href="/250-rounds-federal-1-1-8">250 Rounds of 12ga Ammo by Federal - 1 1/8 ounce #7 1/2 shot</a>
+       <div class="price-box"><p class="old-price">Regular Price: <span class="price">$94</span></p>
+       <p class="special-price">On Sale: <span class="price">$90</span></p></div>102 Ready to Ship
+       <a href="/250-rounds-federal-1-1-8">Buy this 250 Rounds of Bulk 12ga Ammo by Federal</a></li>
+     <li class="item"><a href="/1000-rounds-9mm-pmc">1000 Rounds of 9mm Ammo by PMC - 115gr FMJ</a><span class="price">$259</span>5 Ready to Ship</li>
+    </ul>"""
+    ls = extract(html, "https://www.bulkammo.com/shotgun/bulk-12ga-ammo", "Bulk Ammo", "12ga", cfg["retailers"], [])
+    got = sorted((l.price, l.rounds, l.stock_qty) for l in ls)
+    assert got == [(90.0, 250, 102), (259.0, 1000, 5)]

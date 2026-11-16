@@ -119,19 +119,21 @@ retailers:
       762x54r: [https://ammo.com/rifle/7.62x54r-ammo]
 
   - name: Target Sports USA
+    # A Shopify store: its public catalog JSON is read first (each size, e.g.
+    # "Box of 50" / "Case of 500", with price and in-stock flag). The pages
+    # below are only used if the JSON isn't available.
+    shopify_collections:
+      9mm: [9mm-luger-ammo-c-51]
+      12ga: [12-gauge-shotgun-ammo-c-747]
+      762x54r: [762x54r-ammo-c-103]
     aliases: [TargetSportsUSA, Target Sports]
     domain: targetsportsusa.com
     sitemaps: {urls: [robots], max_products: 10}   # product URLs from the sitemap listed in robots.txt
     # Their shipping page says case-quantity ammo ships free via UPS Ground.
     shipping: {flat: 14.99, free_min_rounds: {9mm: 500, 12ga: 250, 762x54r: 440}, verified: false}
     pages:
-      9mm:
-        - https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx
-        - https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx?pagenum=2
-        - https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx?pagenum=3
-      12ga:
-        - https://www.targetsportsusa.com/collections/12-gauge-shotgun-ammo-c-747
-        - https://www.targetsportsusa.com/collections/12-gauge-shotgun-ammo-c-747?pagenum=2
+      9mm: [https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx]
+      12ga: [https://www.targetsportsusa.com/collections/12-gauge-shotgun-ammo-c-747]
       762x54r: ["https://www.targetsportsusa.com/762x54r-ammo-c-103.aspx"]
 
   - name: Bulk Ammo

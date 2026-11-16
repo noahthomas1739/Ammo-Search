@@ -17,6 +17,7 @@ from ..fetch import FetchError
 from ..models import Listing
 from .extract import extract
 from .feeds import parse_feed, sitemap_product_urls
+from .shopify import parse_products_json, product_count
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +141,29 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
         if only and only.lower() not in name.lower():
             continue
 
+        done: set = set()  # calibers already covered by a structured source; pages for them are skipped
+
+        # 0) public catalog JSON (Shopify stores)
+        base = source_base(src)
+        for cal, handles in (src.get("shopify_collections") or {}).items():
+            found, err, first = [], None, None
+            for h in handles:
+                for page in range(1, (src.get("json_max_pages") or 4) + 1):
+                    url = f"{base}/collections/{h}/products.json?limit=250&page={page}"
+                    first = first or url
+                    try:
+                        body = fetch(url, "raw", None)
+                    except Exception as e:
+                        err = e
+                        break
+                    found += parse_products_json(body, base, name, cal)
+                    if product_count(body) < 250:
+                        break
+            listings += found
+            record(first, name, cal, "json", found, None if found or err is None else err)
+            if found:
+                done.add(cal)
+
         # 1) feeds
         for url in src.get("feeds") or []:
             try:
@@ -158,11 +182,13 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
                 record(f"{name} sitemaps", name, "all", "sitemap", [], e)
                 sm_urls = []
             for cal in cals:
-                if sm_urls:
+                if sm_urls and cal not in done:
                     _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record)
 
-        # 3) listing pages
+        # 3) listing pages (fallback for calibers no structured source covered)
         for cal, urls in (src.get("pages") or {}).items():
+            if cal in done:
+                continue
             for url in urls:
                 try:
                     found = extract(fetch(url, "html", None), url, name, cal, retailers, markets, aggregator=agg)
