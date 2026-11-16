@@ -21,6 +21,7 @@ fetch:
   max_retries: 2            # temporary errors (timeout, 429, 5xx) are retried with backoff...
   retry_backoff_seconds: 15 # ...15 s, then 45 s, or the site's Retry-After if it gives one
   max_retry_wait_seconds: 120   # a longer Retry-After means: stop for this run, try next run
+  round_count_lookups: 15       # listings with no round count: product pages read per site per run
   restricted_recheck_days: 7    # a 403 / CAPTCHA / robots.txt "no" is remembered this long, then re-checked
   min_delay_seconds: 8      # random pause between page loads on the same site
   max_delay_seconds: 20

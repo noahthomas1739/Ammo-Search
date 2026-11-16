@@ -15,7 +15,7 @@ import argparse
 import logging
 import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date
 from typing import Optional
 
@@ -157,14 +157,24 @@ def run_auto(cfg: dict, state: State, fetcher) -> None:
 
 def run_doctor(cfg: dict, fetcher, only: Optional[str]) -> None:
     listings, pages = collect(cfg, fetcher, only=only)
+    seen_sets: dict = {}
     by_src = defaultdict(list)
     for l in listings:
         by_src[l.source].append(l)
     for url, p in pages.items():
         status = f"{p['count']:3d} products" if p["ok"] else f"FAILED: {p['error']}"
         print(f"{p['source']:<24} {p['caliber']:<8} {p.get('via', ''):<8} {status}\n    {url}")
-        for l in by_src.get(url, [])[:3]:
+        mine = by_src.get(url, [])
+        for l in mine[:3]:
             print(f"      - ${l.price:.2f} | {l.rounds or '?'} rds | {'in stock' if l.in_stock else 'OOS'} | {l.retailer} | {l.title[:70]}")
+        if mine:
+            why = _drop_reasons(cfg, mine)
+            print("      usable: " + ", ".join(f"{k} {v}" for k, v in why.items()))
+        sig = frozenset(l.url for l in mine)
+        if sig and sig in seen_sets:
+            print(f"      NOTE: same products as {seen_sets[sig]} (this page number seems to be ignored)")
+        elif sig:
+            seen_sets[sig] = url
     print("\nCoverage this run (a store that couldn't be reached is NOT evidence of no deals):")
     for name, c in coverage(cfg, listings, pages).items():
         extra = ""
@@ -176,6 +186,26 @@ def run_doctor(cfg: dict, fetcher, only: Optional[str]) -> None:
             extra = "; ".join(c["failures"][:3])
         print(f"  {name:<24} {c['status']:<20} {extra}")
     _step_summary({"doctor": True, "pages_ok": sum(1 for p in pages.values() if p["count"])}, pages, [])
+
+
+def _drop_reasons(cfg: dict, ls) -> dict:
+    """Why listings from one page were or weren't usable."""
+    from .parse import parse
+    c = Counter()
+    for l in ls:
+        a = parse(f"{l.title} {l.extra_text}", l.caliber_hint)
+        m, d = evaluate(l, cfg)
+        if d:
+            c["deal"] += 1
+        elif m:
+            c["right product, price above GOOD"] += 1
+        elif not l.in_stock:
+            c["out of stock"] += 1
+        elif not (l.rounds or a.rounds):
+            c["no round count"] += 1
+        else:
+            c["not your spec"] += 1
+    return dict(c)
 
 
 def run_sources(state: State) -> None:
@@ -193,10 +223,11 @@ def run_sources(state: State) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ammo_finder")
-    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "doctor", "discover", "sources", "test-alert"])
+    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "doctor", "discover", "sources", "inspect", "test-alert"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--state", default=os.environ.get("AMMO_STATE") or "state/state.json")
     ap.add_argument("--only", help="doctor: only sources whose name contains this")
+    ap.add_argument("url", nargs="?", help="inspect: the page to summarize")
     ap.add_argument("--dry-run", action="store_true", help="print alerts instead of sending")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -227,6 +258,12 @@ def _dispatch(args, cfg: dict, state: State, fetcher) -> int:
         notify.send(title, body)
     elif args.command == "doctor":
         run_doctor(cfg, fetcher, args.only)
+    elif args.command == "inspect":
+        if not args.url:
+            print("usage: python -m ammo_finder inspect URL")
+            return 2
+        from .inspect_page import run_inspect
+        run_inspect(cfg, fetcher, args.url)
     elif args.command == "sources":
         run_sources(state)
     elif args.command == "discover":

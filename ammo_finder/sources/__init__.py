@@ -170,7 +170,76 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
                     record(url, name, cal, "page", found)
                 except Exception as e:
                     record(url, name, cal, "page", [], e)
+    _fill_round_counts(cfg, listings, fetch, fetcher, report)
     return listings, report
+
+
+_SPEC_COUNT = re.compile(
+    r"(?<![a-z])(?:round count|rounds? per (?:box|case|pack)|rounds?/(?:box|case)|box (?:qty|quantity|count)|"
+    r"quantity|qty|count|# of rounds|number of rounds|rounds)\s*[:\-]?\s*(\d{1,2},\d{3}|\d{1,4})\b",
+    re.I,
+)
+
+
+def rounds_from_product_page(html: str) -> Optional[int]:
+    """Round count from a product page: its schema.org name/description, a specs
+    line like "Rounds Per Box: 50", or the main heading. Related-product blocks
+    are ignored by preferring those structured spots over free text."""
+    from bs4 import BeautifulSoup
+    from ..parse import detect_rounds, normalize
+    from .extract import from_jsonld
+
+    soup = BeautifulSoup(html, "lxml")
+    for l in from_jsonld(soup, "https://x", "x", None)[:1]:
+        if l.rounds:
+            return l.rounds
+    for el in soup.find_all(["tr", "li", "dt", "dd", "div", "span", "p"]):
+        t = normalize(el.get_text(" ", strip=True))
+        if len(t) > 80:
+            continue
+        m = _SPEC_COUNT.search(t)
+        if m:
+            n = int(m.group(1).replace(",", ""))
+            if 5 <= n <= 5000:
+                return n
+    h1 = soup.find("h1")
+    return detect_rounds(normalize(h1.get_text(" "))) if h1 else None
+
+
+def _fill_round_counts(cfg, listings, fetch, fetcher, report) -> None:
+    """Listings without a round count can't be priced per round. For in-stock
+    listings that otherwise look like a match, read the count from the product
+    page (cached a week, at most `fetch.round_count_lookups` new loads per site per run)."""
+    from ..parse import parse
+    limit = (cfg.get("fetch") or {}).get("round_count_lookups", 15)
+    loads: dict[str, int] = {}
+    for l in listings:
+        if l.rounds or not l.in_stock or l.marketplace or "/" not in l.url[8:]:
+            continue
+        if any(v.get("via") == "feed" and k == l.source for k, v in report.items()):
+            continue  # feed items link to the aggregator, not the product
+        a = parse(f"{l.title} {l.extra_text}", l.caliber_hint)
+        if a.caliber not in ("9mm", "12ga", "762x54r") or a.reloaded or a.not_ammo or a.expanding:
+            continue
+        if a.caliber == "9mm" and (not a.fmj or a.case in ("steel", "aluminum") or (a.grain and a.grain not in (115, 124))):
+            continue
+        if a.caliber == "12ga" and (a.not_birdshot or a.shot_material in ("steel", "bismuth", "tungsten") or (a.shot_oz and a.shot_oz not in (1.125, 1.25))):
+            continue
+        host = urlparse(l.url).netloc
+        if loads.get(host, 0) >= limit:
+            continue
+        try:
+            html = fetch(l.url, "html", 7 * 86400)
+        except Exception as e:
+            if isinstance(e, FetchError) and (e.category == "restricted" or e.kind == "rate_limited"):
+                loads[host] = limit  # stop asking this site this run
+            continue
+        if not getattr(fetcher, "last_from_cache", False):
+            loads[host] = loads.get(host, 0) + 1
+        n = rounds_from_product_page(html)
+        if n:
+            l.rounds = n
+            l.extra_text = f"{l.extra_text} [round count from product page]"
 
 
 def _sitemap_roots(urls: list[str], src: dict, fetch, fetcher) -> list[str]:

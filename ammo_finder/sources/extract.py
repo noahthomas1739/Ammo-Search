@@ -147,7 +147,7 @@ def from_jsonld(soup: BeautifulSoup, base_url: str, retailer: str, caliber: Opti
                         retailer=seller_name or retailer,
                         url=url,
                         price=price,
-                        rounds=detect_rounds(name),
+                        rounds=detect_rounds(name) or detect_rounds(normalize(str(node.get("description", "")))),
                         in_stock=not re.search(r"OutOfStock|BackOrder|PreOrder|SoldOut|Discontinued", avail, re.I),
                         stock_qty=qty,
                         source=base_url,

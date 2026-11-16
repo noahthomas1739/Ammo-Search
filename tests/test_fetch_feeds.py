@@ -180,3 +180,27 @@ def test_robots_temporary_failure_is_not_restriction(fx):
         f.get("https://flaky.test/x")
     assert e.value.category == "temporary" and "https://flaky.test/x" not in calls
     assert f._cache_read("https://flaky.test/x", "html", 999) is None
+
+
+def test_round_count_from_product_page(cfg):
+    from ammo_finder.sources import rounds_from_product_page, collect
+    page = """<html><h1>CCI Blazer Brass 9mm Ammo 115 Grain FMJ</h1>
+      <table><tr><td>Rounds Per Box:</td><td>50</td></tr></table>
+      <div class="related">Magtech 9mm 1000 Rounds $299</div></html>"""
+    assert rounds_from_product_page(page) == 50
+    listing_page = """<html><li class="product-item"><a href="https://www.targetsportsusa.com/blazer-p-1.aspx">CCI Blazer Brass 9mm Ammo 115 Grain Full Metal Jacket</a>
+      <span class="price">$12.00</span></li>
+      <li class="product-item"><a href="https://www.targetsportsusa.com/hst-p-2.aspx">Federal HST 9mm 124 Grain JHP</a><span class="price">$30.00</span></li></html>"""
+    docs = {"https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx": listing_page,
+            "https://www.targetsportsusa.com/blazer-p-1.aspx": page}
+    asked = []
+    def fetch(url, kind="html", ttl=None):
+        asked.append(url)
+        return docs[url]
+    cfg = dict(cfg)
+    cfg["aggregators"] = []
+    cfg["retailers"] = [dict(r, sitemaps=None, pages=({"9mm": ["https://www.targetsportsusa.com/9mm-luger-ammo-c-51.aspx"]} if r["name"] == "Target Sports USA" else {})) for r in cfg["retailers"]]
+    ls, _ = collect(cfg, fetch)
+    blazer = [l for l in ls if "blazer" in l.url][0]
+    assert blazer.rounds == 50
+    assert "https://www.targetsportsusa.com/hst-p-2.aspx" not in asked  # JHP: not worth a lookup
