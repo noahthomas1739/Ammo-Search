@@ -54,7 +54,7 @@ categories:
     enabled: true
     shot_oz: 1.25
     shot_sizes: ["6", "7.5", "8", "9"]
-    min_velocity: 1290          # "about 1300 fps or more"
+    min_velocity: 1275          # "about 1300 fps or more"; 1275 accepted (2026-11-16)
     allow_unknown_velocity: true  # alert with a "verify velocity" note when fps isn't listed
     min_rounds: 250
     good: 0.58
