@@ -103,11 +103,16 @@ def _email(title: str, body: str) -> None:
     raise RuntimeError("Could not reach the mail server. " + " | ".join(errors))
 
 
+SENT: list[dict] = []  # every send attempt this process made (shown by `status`)
+
+
 def send(title: str, body: str, urgent: bool = False) -> list[str]:
     """Send on every configured channel. Returns the channels that worked."""
     print(f"\n===== {title} =====\n{body}\n")
     if os.environ.get("DRY_RUN"):
+        SENT.append({"title": title, "ok": ["dry-run"], "errors": []})
         return ["dry-run"]
+    errors: list[str] = []
     ok = []
     chans = channels()
     if not chans:
@@ -123,6 +128,10 @@ def send(title: str, body: str, urgent: bool = False) -> list[str]:
             ok.append(ch)
         except Exception as e:
             log.error("Sending via %s failed: %s", ch, e)
+            errors.append(f"{ch}: {e}")
+    if not chans:
+        errors.append("no alert channel configured")
+    SENT.append({"title": title, "ok": ok, "errors": errors})
     if chans and not ok:
         raise RuntimeError("Every alert channel failed")
     return ok

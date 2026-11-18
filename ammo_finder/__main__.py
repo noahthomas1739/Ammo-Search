@@ -16,7 +16,7 @@ import logging
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import yaml
@@ -92,8 +92,15 @@ def run_check(cfg: dict, state: State, fetcher) -> dict:
         "deals": len(deals),
         "texted": sent_urgent,
         "queued_for_digest": queued,
+        "deal_list": [
+            {"tier": d.tier, "cpr": round(d.cpr, 4), "title": d.listing.title[:90], "retailer": d.listing.retailer,
+             "url": d.listing.url, "emailed_now": d in urgent[:sent_urgent]}
+            for d in deals[:15]
+        ],
     }
     _step_summary(summary, pages, deals)
+    _LAST_SUMMARY.clear()
+    _LAST_SUMMARY.update(summary)
     return summary
 
 
@@ -215,6 +222,52 @@ def _drop_reasons(cfg: dict, ls) -> dict:
     return dict(c)
 
 
+_LAST_SUMMARY: dict = {}
+
+
+def _record_run(state_path: str, command: str, started, error) -> None:
+    """Append this run (what it found, which emails went out or failed) to state, for `status`."""
+    try:
+        st = State(state_path)  # re-read: the command may have saved newer data
+        runs = st.data.setdefault("runs", [])
+        runs.append({
+            "command": command,
+            "started": started.isoformat(timespec="seconds"),
+            "finished": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "error": error,
+            "summary": {k: v for k, v in _LAST_SUMMARY.items()},
+            "emails": list(notify.SENT),
+        })
+        st.data["runs"] = runs[-30:]
+        st.save()
+    except Exception as e:  # never let bookkeeping hide the real result
+        log.warning("could not record run: %s", e)
+
+
+def run_status(state: State) -> None:
+    runs = state.data.get("runs", [])
+    if not runs:
+        print("No runs recorded yet (status tracking starts with this version).")
+    for r in runs[-8:]:
+        local = datetime.fromisoformat(r["started"]).astimezone().strftime("%a %b %d %I:%M %p")
+        sm = r.get("summary") or {}
+        line = f"{local}  {r['command']:<6}"
+        if sm:
+            line += f"  stores read: {sm.get('pages_ok')}/{sm.get('pages_total')}  deals: {sm.get('deals')}  emailed now: {sm.get('texted')}  queued for digest: {sm.get('queued_for_digest')}"
+        print(line)
+        if r.get("error"):
+            print(f"    RUN FAILED: {r['error']}")
+        for d in sm.get("deal_list", []):
+            note = "emailed this run" if d.get("emailed_now") else ("already emailed earlier" if d["tier"] != "GOOD" else "goes in daily digest")
+            print(f"    {d['tier']:<11} {d['cpr'] * 100:.1f}¢/rd  {d['retailer']} | {d['title'][:60]}  ({note})")
+        for e in r.get("emails", []):
+            status = "SENT via " + ", ".join(e["ok"]) if e["ok"] else "NOT SENT: " + "; ".join(e["errors"])
+            print(f"    email: \"{e['title'][:70]}\"  {status}")
+    pend = state.data.get("digest_pending", {})
+    print(f"\nGOOD deals waiting for the next daily digest: {len(pend)}")
+    print(f"Last digest sent: {state.data.get('last_digest', 'never')}")
+
+
 def run_sources(state: State) -> None:
     """What has worked, what hasn't, and when, across all past runs."""
     print("Retailers (how each was last reached):")
@@ -230,7 +283,7 @@ def run_sources(state: State) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ammo_finder")
-    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "doctor", "discover", "sources", "inspect", "test-alert"])
+    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "status", "doctor", "discover", "sources", "inspect", "test-alert"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--state", default=os.environ.get("AMMO_STATE") or "state/state.json")
     ap.add_argument("--only", help="doctor: only sources whose name contains this")
@@ -244,11 +297,19 @@ def main(argv=None) -> int:
     cfg = load_config(args.config)
     state = State(args.state)
     fetcher = from_config(cfg, os.path.join(os.path.dirname(os.path.abspath(args.state)), "cache"))
+    started = datetime.now(timezone.utc)
+    error = None
     try:
         rc = _dispatch(args, cfg, state, fetcher)
     except KeyboardInterrupt:
         print("\nStopped.")
         os._exit(130)  # skip browser shutdown, which would print noise after Ctrl+C
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        if args.command in ("check", "auto", "digest", "monthly", "test-alert"):
+            _record_run(args.state, args.command, started, error)
     fetcher.close()
     fetcher.prune_cache()
     return rc
@@ -274,6 +335,8 @@ def _dispatch(args, cfg: dict, state: State, fetcher) -> int:
             return 2
         from .inspect_page import run_inspect
         run_inspect(cfg, fetcher, args.url)
+    elif args.command == "status":
+        run_status(state)
     elif args.command == "sources":
         run_sources(state)
     elif args.command == "discover":
