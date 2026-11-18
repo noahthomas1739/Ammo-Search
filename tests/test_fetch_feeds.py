@@ -272,3 +272,20 @@ def test_sitemap_rotation(cfg, tmp_path):
     for _ in range(3):
         _from_sitemap(cfg, src, "762x54r", ["https://x/sitemap.xml"], {"max_products": 2}, fetch, Fx(), [], lambda *a, **k: None)
     assert seen == urls[:5] + urls[:1]  # 0,1 then 2,3 then 4,0
+
+
+def test_per_site_delay_and_slowdown_on_429(cfg, tmp_path, monkeypatch):
+    from ammo_finder.fetch import from_config
+    fx = from_config(cfg, str(tmp_path))
+    assert fx.host_delay["www.targetsportsusa.com"] == (45.0, 75.0)
+    f = Fetcher(cache_dir=str(tmp_path / "c2"), min_delay=5, max_delay=5, use_browser=False, respect_robots=False, max_retries=1)
+    slept = []
+    monkeypatch.setattr(F.time, "sleep", lambda s: slept.append(s))
+    errs = [F._status_error("https://s.test/a", 429, retry_after=1)]
+    def fake(url, kind):
+        if errs:
+            raise errs.pop()
+        return "ok"
+    monkeypatch.setattr(f, "_http_get", fake)
+    f.get("https://s.test/a")
+    assert f.host_delay["s.test"] == (10, 10)

@@ -109,6 +109,7 @@ class Fetcher:
         self.backoff = backoff_seconds
         self.max_retry_wait = max_retry_wait
         self.restricted_ttl = restricted_recheck_days * 86400
+        self.host_delay: dict = {}  # host -> (min, max) seconds between loads, for slower sites
         self._last_hit: dict[str, float] = {}
         self._robots: dict = {}  # base -> RobotFileParser | None (no rules) | FetchError (temporary)
         self._host_stop: dict[str, FetchError] = {}  # host -> reason to stop for this run
@@ -147,6 +148,10 @@ class Fetcher:
                 self._cache_write(url, kind, body=body)
                 return body
             except FetchError as e:
+                if e.kind == "rate_limited":  # the site says we're too fast: slow down for the rest of the run
+                    lo, hi = self.host_delay.get(host, self.delay)
+                    self.host_delay[host] = (lo * 2, hi * 2)
+                    log.info("%s asked us to slow down; now %.0f-%.0fs between its pages", host, lo * 2, hi * 2)
                 if e.category == "temporary" and attempt < self.max_retries:
                     wait = e.retry_after if e.retry_after is not None else self.backoff * (3 ** attempt) * random.uniform(0.8, 1.2)
                     if wait <= self.max_retry_wait:
@@ -224,7 +229,8 @@ class Fetcher:
     def _pace(self, host: str) -> None:
         last = self._last_hit.get(host)
         if last is not None:
-            wait = last + random.uniform(*self.delay) - time.time()
+            lo, hi = self.host_delay.get(host, self.delay)
+            wait = last + random.uniform(lo, hi) - time.time()
             if wait > 0:
                 time.sleep(wait)
         self._last_hit[host] = time.time()
@@ -314,7 +320,7 @@ def _playwright_installed() -> bool:
 
 def from_config(cfg: dict, cache_dir: str) -> Fetcher:
     f = cfg.get("fetch") or {}
-    return Fetcher(
+    fx = Fetcher(
         cache_dir=cache_dir,
         cache_hours=f.get("cache_hours", 5),
         min_delay=f.get("min_delay_seconds", 8),
@@ -326,3 +332,16 @@ def from_config(cfg: dict, cache_dir: str) -> Fetcher:
         max_retry_wait=f.get("max_retry_wait_seconds", 120),
         restricted_recheck_days=f.get("restricted_recheck_days", 7),
     )
+    # per-store pacing: `delay_seconds: [min, max]` on a retailer/aggregator
+    for src in [*cfg.get("retailers", []), *cfg.get("aggregators", [])]:
+        d = src.get("delay_seconds")
+        if not d:
+            continue
+        hosts = {urlparse(u).netloc.lower() for urls in (src.get("pages") or {}).values() for u in urls}
+        if src.get("domain"):
+            hosts |= {src["domain"], "www." + src["domain"]}
+        if src.get("base_url"):
+            hosts.add(urlparse(src["base_url"]).netloc.lower())
+        for h in hosts:
+            fx.host_delay[h] = (float(d[0]), float(d[1]))
+    return fx

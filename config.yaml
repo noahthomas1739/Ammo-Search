@@ -119,6 +119,8 @@ retailers:
       762x54r: [https://ammo.com/rifle/7.62x54r-ammo]
 
   - name: Target Sports USA
+    # Answered "429 too many requests" on 2026-11-18, so its pages are loaded slowly.
+    delay_seconds: [45, 75]
     # A Shopify store: its public catalog JSON is read first (each size, e.g.
     # "Box of 50" / "Case of 500", with price and in-stock flag). The pages
     # below are only used if the JSON isn't available.
