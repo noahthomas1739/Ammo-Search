@@ -101,3 +101,29 @@ def test_gmail_defaults(monkeypatch):
     monkeypatch.setattr(notify.smtplib, "SMTP", FakeSMTP)
     notify._email("t", "b")
     assert sent == {"host": ("smtp.gmail.com", 587), "login": "me@gmail.com", "to": "me@gmail.com"}
+
+
+def test_urgent_email_sent_before_run_dies(cfg, tmp_path, monkeypatch):
+    """A GREAT/EXCEPTIONAL deal is emailed as soon as its store is read,
+    so a later hang/crash (or the Mac going to sleep) doesn't lose it."""
+    from ammo_finder import notify
+    monkeypatch.setenv("DRY_RUN", "1")
+    notify.SENT.clear()
+    cfg = dict(cfg)
+    cfg["retailers"] = [dict(r, pages={}, enabled=True, sitemaps=None, shopify_collections=None) for r in cfg["retailers"]]
+    cfg["aggregators"] = [
+        {"name": "AmmoSeek", "pages": {"762x54r": ["https://ammoseek.com/ammo/7.62x54mmr"]}},
+        {"name": "gun.deals", "pages": {"9mm": ["https://gun.deals/x"]}},
+    ]
+    def fetch(url):
+        if "gun.deals" in url:
+            raise KeyboardInterrupt  # stands in for the run being killed mid-way
+        return fixture("aggregator_table.html")
+    path = str(tmp_path / "s.json")
+    s = State(path)
+    try:
+        run_check(cfg, s, fetcher=fetch)
+    except KeyboardInterrupt:
+        pass
+    assert any("EXCEPTIONAL" in e["title"] for e in notify.SENT)
+    assert State(path).data["alerted"]  # saved to disk before the crash

@@ -15,6 +15,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -38,8 +39,29 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def run_check(cfg: dict, state: State, fetcher) -> dict:
-    listings, pages = collect(cfg, fetcher)
+def run_check(cfg: dict, state: State, fetcher, only: Optional[str] = None) -> dict:
+    alerts_cfg = cfg["alerts"]
+    emailed_now: set = set()
+
+    def alert_now(name: str, ls) -> None:
+        """Email GREAT/EXCEPTIONAL deals from a store as soon as it's been read."""
+        found: dict[str, Deal] = {}
+        for l in ls:
+            d = evaluate(l, cfg)[1]
+            if d and d.tier in ("GREAT", "EXCEPTIONAL") and (d.key not in found or d.cpr < found[d.key].cpr):
+                found[d.key] = d
+        new = [d for d in sorted(found.values(), key=lambda d: (-TIER_ORDER[d.tier], d.cpr)) if state.should_alert(d, alerts_cfg)]
+        for i in range(0, min(len(new), MAX_DEALS_PER_TEXT * 3), MAX_DEALS_PER_TEXT):
+            batch = new[i : i + MAX_DEALS_PER_TEXT]
+            title, body = format_alert(batch)
+            notify.send(title, body, urgent=True)
+            for d in batch:
+                state.mark_alerted(d)
+                emailed_now.add(d.key)
+            state.save()  # remember right away, even if the run is interrupted later
+
+    minutes = (cfg.get("fetch") or {}).get("max_run_minutes", 25)
+    listings, pages = collect(cfg, fetcher, only=only, on_source_done=alert_now, deadline=time.time() + minutes * 60)
     obs: dict[str, list[float]] = defaultdict(list)
     best: dict[str, Deal] = {}
     for l in listings:
@@ -58,16 +80,7 @@ def run_check(cfg: dict, state: State, fetcher) -> dict:
     # Pages full of menu items or junk don't count.
     state.record_health(sum(len(v) for v in obs.values()) > 0)
 
-    alerts_cfg = cfg["alerts"]
-    urgent = [d for d in deals if d.tier in ("GREAT", "EXCEPTIONAL") and state.should_alert(d, alerts_cfg)]
-    sent_urgent = 0
-    for i in range(0, min(len(urgent), MAX_DEALS_PER_TEXT * 3), MAX_DEALS_PER_TEXT):
-        batch = urgent[i : i + MAX_DEALS_PER_TEXT]
-        title, body = format_alert(batch)
-        notify.send(title, body, urgent=True)
-        for d in batch:
-            state.mark_alerted(d)
-        sent_urgent += len(batch)
+    sent_urgent = len(emailed_now)
 
     queued = sum(1 for d in deals if d.tier == "GOOD" and state.queue_digest(d, alerts_cfg))
 
@@ -94,7 +107,7 @@ def run_check(cfg: dict, state: State, fetcher) -> dict:
         "queued_for_digest": queued,
         "deal_list": [
             {"tier": d.tier, "cpr": round(d.cpr, 4), "title": d.listing.title[:90], "retailer": d.listing.retailer,
-             "url": d.listing.url, "emailed_now": d in urgent[:sent_urgent]}
+             "url": d.listing.url, "emailed_now": d.key in emailed_now}
             for d in deals[:15]
         ],
     }
@@ -229,6 +242,7 @@ def _record_run(state_path: str, command: str, started, error) -> None:
     """Append this run (what it found, which emails went out or failed) to state, for `status`."""
     try:
         st = State(state_path)  # re-read: the command may have saved newer data
+        st.data.pop("current_run", None)
         runs = st.data.setdefault("runs", [])
         runs.append({
             "command": command,
@@ -246,8 +260,13 @@ def _record_run(state_path: str, command: str, started, error) -> None:
 
 def run_status(state: State) -> None:
     runs = state.data.get("runs", [])
+    cur = state.data.get("current_run")
+    if cur:
+        local = datetime.fromisoformat(cur["started"]).astimezone().strftime("%a %b %d %I:%M %p")
+        print(f"A '{cur['command']}' run started {local} hasn't finished: it's still running, or it was stopped "
+              "(Mac asleep/shut down). Deals it found before stopping were already emailed.\n")
     if not runs:
-        print("No runs recorded yet (status tracking starts with this version).")
+        print("No finished runs recorded yet.")
     for r in runs[-8:]:
         local = datetime.fromisoformat(r["started"]).astimezone().strftime("%a %b %d %I:%M %p")
         sm = r.get("summary") or {}
@@ -286,7 +305,7 @@ def main(argv=None) -> int:
     ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "status", "doctor", "discover", "sources", "inspect", "test-alert"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--state", default=os.environ.get("AMMO_STATE") or "state/state.json")
-    ap.add_argument("--only", help="doctor: only sources whose name contains this")
+    ap.add_argument("--only", help="doctor/check: only stores whose name contains this")
     ap.add_argument("url", nargs="?", help="inspect: the page to summarize")
     ap.add_argument("--dry-run", action="store_true", help="print alerts instead of sending")
     args = ap.parse_args(argv)
@@ -299,6 +318,9 @@ def main(argv=None) -> int:
     fetcher = from_config(cfg, os.path.join(os.path.dirname(os.path.abspath(args.state)), "cache"))
     started = datetime.now(timezone.utc)
     error = None
+    if args.command in ("check", "auto"):
+        state.data["current_run"] = {"command": args.command, "started": started.isoformat(timespec="seconds")}
+        state.save()
     try:
         rc = _dispatch(args, cfg, state, fetcher)
     except KeyboardInterrupt:
@@ -317,7 +339,7 @@ def main(argv=None) -> int:
 
 def _dispatch(args, cfg: dict, state: State, fetcher) -> int:
     if args.command == "check":
-        run_check(cfg, state, fetcher)
+        run_check(cfg, state, fetcher, only=args.only)
         state.save()
     elif args.command == "auto":
         run_auto(cfg, state, fetcher)

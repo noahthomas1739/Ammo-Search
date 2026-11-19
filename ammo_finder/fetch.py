@@ -260,7 +260,7 @@ class Fetcher:
             self._browser = self._pw.chromium.launch(headless=True)
             self._page = self._browser.new_context(locale="en-US").new_page()
         try:
-            resp = self._page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            resp = self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
             try:
                 self._page.wait_for_load_state("networkidle", timeout=6000)
             except Exception:

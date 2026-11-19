@@ -11,6 +11,7 @@ import inspect
 import json
 import logging
 import os
+import time
 import re
 from typing import Callable, Optional
 from urllib.parse import urlparse
@@ -117,7 +118,16 @@ def _wrap(fetcher) -> Callable:
     return lambda url, kind="html", ttl=None: fetcher(url)
 
 
-def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[list[Listing], dict]:
+def collect(
+    cfg: dict,
+    fetcher: Callable,
+    only: Optional[str] = None,
+    on_source_done: Optional[Callable[[str, list], None]] = None,
+    deadline: Optional[float] = None,
+) -> tuple[list[Listing], dict]:
+    """on_source_done(name, listings) is called as soon as each store is finished,
+    so urgent deals can be emailed without waiting for the whole run.
+    deadline (time.time() value): stores not started by then are skipped this run."""
     """Returns (listings, report {key: {source, caliber, ok, count, error, via}})."""
     fetch = _wrap(fetcher)
     retailers, markets = cfg["retailers"], cfg.get("marketplace_sellers", [])
@@ -142,6 +152,11 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
         name = src["name"]
         if only and only.lower() not in name.lower():
             continue
+        if deadline and time.time() > deadline:
+            record(f"{name} (not reached)", name, "all", "skipped", [],
+                   FetchError(name, "timeout", "this run's time limit was used up; tried next run"))
+            continue
+        first_new = len(listings)
 
         done: set = set()  # calibers already covered by a structured source; pages for them are skipped
 
@@ -201,8 +216,14 @@ def collect(cfg: dict, fetcher: Callable, only: Optional[str] = None) -> tuple[l
                 sm_urls = []
             for cal in todo:
                 if sm_urls:
-                    _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record)
-    _fill_round_counts(cfg, listings, fetch, fetcher, report)
+                    _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record, deadline)
+        mine = listings[first_new:]
+        _fill_round_counts(cfg, mine, fetch, fetcher, report)
+        if on_source_done and mine:
+            try:
+                on_source_done(name, mine)
+            except Exception as e:  # an alert problem must not stop the remaining stores
+                log.error("handling results from %s failed: %s", name, e)
     return listings, report
 
 
@@ -289,7 +310,7 @@ def _sitemap_roots(urls: list[str], src: dict, fetch, fetcher) -> list[str]:
     return out
 
 
-def _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record):
+def _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record, deadline=None):
     name = src["name"]
     include = (sm.get("include") or {}).get(cal) or DEFAULT_SITEMAP_INCLUDE[cal]
     try:
@@ -305,7 +326,7 @@ def _from_sitemap(cfg, src, cal, sm_urls, sm, fetch, fetcher, listings, record):
     ordered = urls[start:] + urls[:start]
     loaded, found, processed = 0, [], 0
     for url in ordered:
-        if loaded >= limit:
+        if loaded >= limit or (deadline and time.time() > deadline):
             break
         processed += 1
         try:
