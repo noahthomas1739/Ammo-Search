@@ -42,7 +42,7 @@ categories:
     enabled: true
     grains: [115, 124]
     min_rounds: 500
-    good: 0.25
+    good: 0.28   # was 0.25; raised to market level 2026-11-19 (digest only)
     great: 0.23
     exceptional: 0.21
     suspicious_below: 0.15
@@ -58,7 +58,7 @@ categories:
     min_velocity: 1275          # "about 1300 fps or more"; 1275 accepted (2026-11-16)
     allow_unknown_velocity: true  # alert with a "verify velocity" note when fps isn't listed
     min_rounds: 250
-    good: 0.58
+    good: 0.62   # was 0.58; raised to market level 2026-11-19 (digest only)
     great: 0.50
     exceptional: 0.45
     suspicious_below: 0.30
@@ -68,17 +68,17 @@ categories:
     shot_oz: 1.125
     min_velocity: 1250
     min_rounds: 250
-    good: 0.42
+    good: 0.45   # was 0.42; raised to market level 2026-11-19 (digest only)
     great: 0.36
     suspicious_below: 0.22
 
   762x54r:
     enabled: true
     min_rounds: 0
-    good: 0.55
+    good: 0.60   # was 0.55; raised to market level 2026-11-19 (digest only)
     great: 0.45
     exceptional: 0.40
-    can_440_good_total: 240
+    can_440_good_total: 264   # was 240; raised to market level 2026-11-19 (digest only)
     can_440_great_total: 200
     suspicious_below: 0.30
 
