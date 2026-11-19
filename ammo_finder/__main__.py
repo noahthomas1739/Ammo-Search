@@ -287,6 +287,39 @@ def run_status(state: State) -> None:
     print(f"Last digest sent: {state.data.get('last_digest', 'never')}")
 
 
+def run_best(cfg: dict, fetcher, caliber: str, only: Optional[str], top: int = 12) -> None:
+    """Cheapest in-stock products that fit your spec right now, regardless of thresholds."""
+    spec_names = {"9mm": ["9mm"], "12ga": ["12ga_a", "12ga_b"], "762x54r": ["762x54r"]}
+    if caliber not in spec_names:
+        print("usage: python -m ammo_finder best 9mm|12ga|762x54r [--only STORE]")
+        return
+    listings, pages = collect(cfg, fetcher, only=only)
+    rows = {}
+    for l in listings:
+        m, d = evaluate(l, cfg)
+        if m is None or m.cpr is None or m.spec not in spec_names[caliber]:
+            continue
+        key = l.url.split("#")[0]
+        if key not in rows or m.cpr < rows[key][0].cpr:
+            rows[key] = (m, l, d)
+    ranked = sorted(rows.values(), key=lambda r: r[0].cpr)[:top]
+    tiers = cfg["categories"][spec_names[caliber][0]]
+    print(f"\nCheapest in-stock {caliber} that fits your spec (delivered to TX, shipping + tax included)")
+    print(f"Your lines: GOOD {tiers['good'] * 100:.0f}¢, GREAT {tiers['great'] * 100:.0f}¢\n")
+    if not ranked:
+        print("Nothing in stock that fits your spec at the stores that could be read.")
+    for m, l, d in ranked:
+        buy = f"{m.units} x {m.unit_rounds}rd" if (m.units or 1) > 1 else f"{m.unit_rounds}rd"
+        ship = " (shipping estimated)" if m.shipping_estimated else ""
+        tier = f"  [{d.tier}]" if d else ""
+        print(f"  {m.cpr * 100:5.1f}¢/rd  ${m.total:,.2f} for {m.total_rounds} rds ({buy}){ship}{tier}")
+        print(f"           {l.retailer} | {l.title[:80]}")
+        print(f"           {l.url}")
+    unread = sorted({p['source'] for p in pages.values() if not p['ok']} - {p['source'] for p in pages.values() if p['ok'] and p['count']})
+    if unread:
+        print(f"\nCouldn't read (prices there unknown, not necessarily higher): {', '.join(unread)}")
+
+
 def run_sources(state: State) -> None:
     """What has worked, what hasn't, and when, across all past runs."""
     print("Retailers (how each was last reached):")
@@ -302,11 +335,11 @@ def run_sources(state: State) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ammo_finder")
-    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "status", "doctor", "discover", "sources", "inspect", "test-alert"])
+    ap.add_argument("command", choices=["check", "digest", "monthly", "auto", "status", "best", "doctor", "discover", "sources", "inspect", "test-alert"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--state", default=os.environ.get("AMMO_STATE") or "state/state.json")
     ap.add_argument("--only", help="doctor/check: only stores whose name contains this")
-    ap.add_argument("url", nargs="?", help="inspect: the page to summarize")
+    ap.add_argument("url", nargs="?", help="inspect: the page to summarize; best: 9mm, 12ga or 762x54r")
     ap.add_argument("--dry-run", action="store_true", help="print alerts instead of sending")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -357,6 +390,8 @@ def _dispatch(args, cfg: dict, state: State, fetcher) -> int:
             return 2
         from .inspect_page import run_inspect
         run_inspect(cfg, fetcher, args.url)
+    elif args.command == "best":
+        run_best(cfg, fetcher, (args.url or "9mm").lower(), args.only)
     elif args.command == "status":
         run_status(state)
     elif args.command == "sources":

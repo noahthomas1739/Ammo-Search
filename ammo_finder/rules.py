@@ -26,6 +26,10 @@ class SpecMatch:
     flags: list = field(default_factory=list)
     notes: list = field(default_factory=list)
     cpr: Optional[float] = None  # delivered cost per round, set by evaluate()
+    total: Optional[float] = None  # delivered total for the purchase priced
+    total_rounds: Optional[int] = None
+    units: Optional[int] = None
+    shipping_estimated: bool = False
 
 
 def find_retailer(name: str, url: str, retailers: list[dict]) -> Optional[dict]:
@@ -184,6 +188,7 @@ def evaluate(listing: Listing, cfg: dict) -> tuple[Optional[SpecMatch], Optional
     if plan is None:
         return m, None
     m.cpr = plan.cpr
+    m.total, m.total_rounds, m.units, m.shipping_estimated = plan.total, plan.rounds, plan.units, plan.shipping_estimated
 
     tier = tier_for(plan.cpr, spec_cfg)
     notes = list(m.notes)
